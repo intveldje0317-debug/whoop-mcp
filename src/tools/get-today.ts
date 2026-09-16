@@ -197,8 +197,9 @@ export async function getToday(
     .sort((left, right) => Date.parse(right.start) - Date.parse(left.start));
   const cycleCandidate = cycles.find(
     (record) =>
-      localDay(record.start, record.timezone_offset) ===
-      localDay(now.toISOString(), record.timezone_offset)
+      record.end == null ||
+      localDay(record.end, record.timezone_offset) ===
+        localDay(now.toISOString(), record.timezone_offset)
   );
   const cycle = parseRecords(
     cycleCandidate ? [cycleCandidate] : [],

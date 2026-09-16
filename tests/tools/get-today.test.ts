@@ -151,6 +151,41 @@ describe("getToday", () => {
     expect(result.data_quality.sources.sleep?.status).toBe("pending");
   });
 
+  it("matches an open overnight cycle whose start falls on the previous local day", async () => {
+    // Regression test for the get_today "cycle: stale" bug shipped in 0.7.0
+    // (introduced by f08eddd6b632e32adc4ad35fc859aa2fe6560c50).
+    //
+    // WHOOP cycles run wake-to-wake, so the cycle covering "right now" almost
+    // always *started* the previous evening — its start's local calendar day
+    // is yesterday, not today. Matching cycleCandidate by localDay(start) instead
+    // of by whether the cycle is still open (end == null) meant get_today reported
+    // "cycle: stale" / "recovery: missing" on effectively every real call, even
+    // though the underlying WHOOP data was fully scored and current.
+    vi.setSystemTime(new Date("2026-03-15T14:00:00.000Z")); // early afternoon, local
+    const overnightCycle: Cycle = {
+      ...mockCycle,
+      start: "2026-03-14T22:21:00.000Z", // started the evening before, local day is Mar 14
+      end: null, // still open — this is WHOOP's current cycle
+    };
+    const overnightSleep: Sleep = {
+      ...mockSleep,
+      start: "2026-03-14T22:30:00.000Z",
+      end: "2026-03-15T06:00:00.000Z", // woke up this morning — local day is Mar 15
+    };
+    const result = await getToday(
+      createMockClient({
+        "/v2/recovery": { records: [mockRecovery] },
+        "/v2/cycle": { records: [overnightCycle] },
+        "/v2/activity/sleep": { records: [overnightSleep] },
+        "/v2/activity/workout": { records: [] },
+      })
+    );
+    expect(result.data_quality.sources.cycle?.status).toBe("available");
+    expect(result.strain?.day_strain).toBe(8.4);
+    expect(result.recovery).not.toBeNull();
+    expect(result.recovery?.score).toBe(72);
+  });
+
   it("does not substitute older sleep when the newest primary sleep has an invalid score", async () => {
     const result = await getToday(
       createMockClient({
@@ -185,7 +220,7 @@ describe("getToday", () => {
     {
       label: "stale cycle",
       recovery: mockRecovery,
-      cycle: { ...mockCycle, start: "2026-03-13T06:00:00Z" },
+      cycle: { ...mockCycle, start: "2026-03-13T06:00:00Z", end: "2026-03-13T12:00:00Z" },
     },
   ])("suppresses recovery for $label", async ({ recovery, cycle }) => {
     const result = await getToday(
