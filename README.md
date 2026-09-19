@@ -16,9 +16,9 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that 
 
 ## Features
 
-> **0.7.0 — Trustworthy Personal Analytics:** Personal baselines, sleep debt,
-> structured results, aggregate privacy and local diagnostics. See the
-> [changelog](CHANGELOG.md#070---2026-09-10) and [release checklist](docs/plans/task-17-v070-trustworthy-personal-analytics.md).
+> **0.7.1:** Restores current recovery and strain in `get_today` for overnight
+> WHOOP cycles and supports a configurable OAuth redirect URI. See the
+> [changelog](CHANGELOG.md#071---2026-09-19).
 
 - 🏋️ **16 health data tools** — recovery, sleep, workouts, cycles, body measurements, profile, summaries, trends, comparisons, record lookups, today's snapshot, calendar, personal baselines, and sleep debt
 - 📊 **4 MCP Resources** — ambient health context (latest recovery, sleep, cycle, profile) available without explicit tool calls
@@ -698,6 +698,11 @@ rm ~/.whoop-mcp/tokens.json
 ### Browser doesn't open during authentication
 
 If the browser doesn't open automatically, check the terminal output for the authorization URL and open it manually.
+
+`WHOOP_REDIRECT_URI` is optional and defaults to `http://localhost:3000/callback`.
+When set, it must be an HTTP loopback URL using `localhost`, `127.0.0.1`, or
+`[::1]`, without credentials, a query string, or a fragment. Register the exact
+URL with your WHOOP Developer App.
 
 ## Testing with MCP Inspector
 

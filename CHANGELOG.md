@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-19
+
+### Fixed
+- `get_today` now recognizes the current open WHOOP cycle even when it started
+  on the previous local calendar day, restoring current strain and recovery
+  instead of incorrectly reporting stale or missing data (#245).
+- The OAuth authorization and token exchange flows honor
+  `WHOOP_REDIRECT_URI` for HTTP loopback callbacks, with validated host, port,
+  and path matching. `http://localhost:3000/callback` remains the default
+  (#220).
+
+### Changed
+- Refreshed development tooling: `@types/node` 26.5.0, TypeScript ESLint
+  8.69.0, ESLint 10.9.1, Prettier 3.9.6, and `tsx` 4.23.13.
+- Updated GitHub Actions for checkout, Node setup, and Pages configuration,
+  artifact upload, and deployment to their current major releases.
+- Updated the locked Zod runtime dependency from 4.4.3 to 4.5.4 without
+  changing the compatible package range.
+
+### Verification
+- **812 tests** across 43 files pass, including regression tests for overnight
+  open-cycle matching and validated custom OAuth loopback callbacks.
+- Lint, typecheck, build, coverage, production dependency audit, and GitHub
+  Pages deployment pass on the release baseline.
+
 ## [0.7.0] - 2026-09-10
 
 **Trustworthy Personal Analytics**
@@ -191,7 +216,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI entry point** — `npx whoop-mcp` with environment variable configuration
 - **202 tests** with full coverage of auth, API client, tools, and error handling
 
-[Unreleased]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.5.2...v0.6.0
