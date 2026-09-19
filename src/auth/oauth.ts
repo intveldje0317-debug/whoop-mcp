@@ -30,7 +30,7 @@ export interface OAuthConfig {
   redirectUri?: string;
   /** Token storage directory. Default: ~/.whoop-mcp/ */
   tokenDir?: string;
-  /** Callback server port. Default: 3000 */
+  /** Callback server port, if provided, must match the redirect URI. */
   port?: number;
 }
 
@@ -46,6 +46,56 @@ export interface TokenResponse {
 interface PkcePair {
   codeVerifier: string;
   codeChallenge: string;
+}
+
+interface LocalRedirect {
+  host: string;
+  port: number;
+  callbackPath: string;
+}
+
+function parseLocalRedirect(config: OAuthConfig): LocalRedirect {
+  const value = config.redirectUri ?? WHOOP_REDIRECT_URI;
+  let redirectUri: URL;
+
+  try {
+    redirectUri = new URL(value);
+  } catch {
+    throw new Error("WHOOP_REDIRECT_URI must be a valid URL");
+  }
+
+  if (redirectUri.protocol !== "http:") {
+    throw new Error("WHOOP_REDIRECT_URI must use HTTP");
+  }
+  if (redirectUri.username || redirectUri.password) {
+    throw new Error("WHOOP_REDIRECT_URI must not include credentials");
+  }
+  if (value.includes("?") || value.includes("#")) {
+    throw new Error("WHOOP_REDIRECT_URI must not include a query string or fragment");
+  }
+  if (!/^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i.test(value)) {
+    throw new Error("WHOOP_REDIRECT_URI must use localhost, 127.0.0.1, or [::1]");
+  }
+
+  const loopbackHosts: Record<string, string> = {
+    localhost: "127.0.0.1",
+    "127.0.0.1": "127.0.0.1",
+    "[::1]": "::1",
+  };
+  const host = loopbackHosts[redirectUri.hostname];
+  if (!host) {
+    throw new Error("WHOOP_REDIRECT_URI must use localhost, 127.0.0.1, or [::1]");
+  }
+
+  const port = Number(redirectUri.port || "80");
+  if (port < 1) {
+    throw new Error("WHOOP_REDIRECT_URI must use a port between 1 and 65535");
+  }
+  if (config.port !== undefined && config.port !== port) {
+    throw new Error("OAuth callback port must match WHOOP_REDIRECT_URI");
+  }
+
+  return { host, port, callbackPath: redirectUri.pathname };
 }
 
 // ---------------------------------------------------------------------------
@@ -295,11 +345,13 @@ export async function authenticate(config: OAuthConfig): Promise<string> {
 async function performOAuthFlow(config: OAuthConfig): Promise<string> {
   const state = randomBytes(16).toString("hex");
   const pkce = generatePkcePair();
-  const port = config.port ?? 3000;
+  const redirect = parseLocalRedirect(config);
 
   // Start the callback server before opening the browser
   const callbackHandle = startCallbackServer({
-    port,
+    host: redirect.host,
+    port: redirect.port,
+    callbackPath: redirect.callbackPath,
     expectedState: state,
   });
 

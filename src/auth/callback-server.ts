@@ -29,8 +29,12 @@ export interface CallbackServerHandle {
 
 /** Options for the callback server */
 export interface CallbackServerOptions {
+  /** Loopback host to bind. Default: 127.0.0.1 */
+  host?: string;
   /** Port to listen on. Default: 3000 */
   port?: number;
+  /** Callback pathname to accept. Default: /callback */
+  callbackPath?: string;
   /** State parameter to validate against (CSRF protection) */
   expectedState: string;
   /** How long to wait before timing out in ms. Default: 120_000 (2 min) */
@@ -98,7 +102,9 @@ const HTML_RESPONSE_HEADERS = {
  * port-collision errors in environments with parallel processes.
  */
 export function startCallbackServer(options: CallbackServerOptions): CallbackServerHandle {
+  const host = options.host ?? "127.0.0.1";
   const requestedPort = options.port ?? 3000;
+  const callbackPath = options.callbackPath ?? "/callback";
   const timeoutMs = options.timeoutMs ?? 120_000;
 
   let resolvedPort = requestedPort;
@@ -108,10 +114,10 @@ export function startCallbackServer(options: CallbackServerOptions): CallbackSer
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const server: Server = createServer((req, res) => {
-      // Only handle GET /callback
+      // Only handle the configured OAuth callback path
       const url = new URL(req.url ?? "/", `http://localhost:${resolvedPort}`);
 
-      if (url.pathname !== "/callback") {
+      if (url.pathname !== callbackPath) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", ...SECURITY_HEADERS });
         res.end("Not found");
         return;
@@ -198,7 +204,7 @@ export function startCallbackServer(options: CallbackServerOptions): CallbackSer
       }
     });
 
-    server.listen(requestedPort, "127.0.0.1", () => {
+    server.listen(requestedPort, host, () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {
         resolvedPort = addr.port;
