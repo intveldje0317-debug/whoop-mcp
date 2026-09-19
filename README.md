@@ -16,9 +16,9 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that 
 
 ## Features
 
-> **0.7.1:** Restores current recovery and strain in `get_today` for overnight
-> WHOOP cycles and supports a configurable OAuth redirect URI. See the
-> [changelog](CHANGELOG.md#071---2026-09-19).
+> **0.8.0:** Adds consent-based command, tool and named-prompt usage telemetry,
+> local telemetry status, and a private maintainer usage dashboard. Unattended
+> startup remains off without explicit opt-in. See the [changelog](CHANGELOG.md#080---2026-09-19).
 
 - 🏋️ **16 health data tools** — recovery, sleep, workouts, cycles, body measurements, profile, summaries, trends, comparisons, record lookups, today's snapshot, calendar, personal baselines, and sleep debt
 - 📊 **4 MCP Resources** — ambient health context (latest recovery, sleep, cycle, profile) available without explicit tool calls
@@ -219,11 +219,14 @@ Flags:
   Copilot in VS Code.
 - `--verify` runs the OAuth flow end-to-end and fetches your profile to confirm
   everything is wired correctly before exiting.
+- `--telemetry=on|off` explicitly sets optional usage telemetry. Interactive setup
+  asks once when no decision is saved, defaulting to No. Non-interactive setup
+  defaults off. `DO_NOT_TRACK=1` and aggregate privacy override consent.
 - `--client-id` / `--client-secret` skip the interactive prompts (useful for
   scripts; secrets entered interactively are masked).
 
 If `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` are already exported in your
-shell, the wizard uses them automatically — no prompts. Combine with
+shell, the wizard uses them automatically without credential prompts. Combine with
 `--verify` to do a one-shot config-correctness check:
 
 ```bash
@@ -231,9 +234,11 @@ WHOOP_CLIENT_ID=... WHOOP_CLIENT_SECRET=... npx whoop-ai-mcp setup --verify
 ```
 
 If the Claude Desktop config file already contains a `whoop` MCP entry from
-a previous setup, the wizard short-circuits — it reads the existing
+a previous setup, the wizard reuses the existing
 credentials, prints `Existing whoop entry found in <path>`, and either
-verifies them (with `--verify`) or exits without rewriting the file. To
+verifies them (with `--verify`) or skips verification. Interactive setup may add
+a telemetry decision if none is saved; `--telemetry=on|off` updates that decision
+while preserving the existing command, credentials and other settings. To
 overwrite an existing entry, pass explicit `--client-id` / `--client-secret`
 flags.
 
@@ -970,7 +975,121 @@ If you connect this MCP server to a remote AI assistant (rather than a
 local one), be aware that those summaries will be sent to that assistant
 in the same way any other tool result is. All data continues to flow only
 between the WHOOP API, this MCP server running on your machine, and the
-assistant you explicitly invoke — there is no third-party telemetry.
+assistant you explicitly invoke. Telemetry is off by default; the
+0.8.0 option below sends only explicitly opted-in usage metadata, never tool
+arguments, results, or health data.
+
+### Optional command telemetry (0.8.0)
+
+Version 0.8.0 adds optional CLI, MCP tool and named prompt-template usage telemetry.
+Interactive `setup` asks for consent, defaulting to No, and saves that choice in
+the target client's environment configuration. There is no global consent file,
+installation ID or install hook. Existing clients are not silently opted in.
+
+```bash
+npx whoop-ai-mcp setup --telemetry=on
+npx whoop-ai-mcp setup --telemetry=off
+```
+
+When consent is granted, setup supplies the maintainer endpoint below unless an
+explicit custom endpoint is configured. No events are sent before setup succeeds;
+its completion event uses the effective consent. Setup failures are not measured.
+For clients whose registration commands are printed, run the generated command
+to persist the choice. Only Desktop's saved configuration can be inspected on a
+subsequent setup run; other targets may prompt again unless given an explicit flag.
+
+For manual configuration, set both variables in the environment of the MCP server process
+(for desktop clients, use the server's `env` configuration):
+
+```bash
+export WHOOP_MCP_TELEMETRY=1
+export WHOOP_MCP_TELEMETRY_ENDPOINT="https://whoop-mcp-telemetry.whoop-ai-mcp.workers.dev/events"
+```
+
+The URL above is the maintainer collector. Use only a collector you
+trust. HTTPS is required; embedded credentials, query strings, and fragments
+are rejected. Invalid or incomplete settings disable telemetry without
+preventing normal use. No default maintainer endpoint is configured in the client.
+
+Check effective configuration locally from a build of this checkout:
+
+```bash
+node dist/index.js telemetry status
+```
+
+The installed command is `whoop-ai-mcp telemetry status`.
+It returns JSON such as `{"enabled":false,"reason":"not_opted_in"}` without
+OAuth or network access. `enabled` means configured, not verified delivery.
+Reasons also include `enabled`, `do_not_track`, `privacy_mode`, and
+`invalid_endpoint`. The `doctor` and `telemetry status` commands never send events.
+
+Disable telemetry by removing `WHOOP_MCP_TELEMETRY`, setting it to `0`, or setting
+`DO_NOT_TRACK=1`. Aggregate privacy mode also disables telemetry, even with opt-in.
+Restart the process after changing settings. There are no persistent
+`telemetry enable`/`disable` commands.
+
+Each JSON POST contains exactly these fields (version reflects the installed package):
+
+```json
+{
+  "schema_version": 1,
+  "package_version": "0.8.0",
+  "kind": "tool",
+  "name": "get_baselines",
+  "outcome": "success"
+}
+```
+
+`kind` is `command`, `tool`, or `prompt`. Command names are `serve` (startup only) and
+`setup` (successful completion after consent); tool names are the 16 registered tools. Outcomes are
+`success` or `error`, including output-validation failures. Unknown tools and
+SDK-rejected inputs are not recorded. No arguments, results, health data,
+credentials, user/device/session IDs, filesystem paths, raw errors, or timestamps
+are included. Prompt events count successful retrievals of the five named MCP
+templates: `weekly_health_review`, `sleep_analysis`, `recovery_trend`,
+`workout_recap`, and `health_check`. They never include prompt arguments, template
+content or chat text. Listing templates and SDK-rejected requests are not counted;
+requesting a template is not proof that its conversation ran. Resources and WHOOP
+API calls are not instrumented.
+
+Sending is best effort: tool responses do not wait for telemetry; at most eight
+requests are pending per process, with excess events dropped. Each request has
+a 500 ms deadline, no retries or redirects, and no disk queue. Short-lived CLI
+commands wait for pending sends within those deadlines. Counts can be incomplete
+and are not unique-user metrics. Telemetry failures produce no console output
+and do not change tool results or command exit codes.
+
+**Collector requirements:** accept the JSON contract above and return a quick
+2xx response. A maintainer-hosted rollout is blocked until ownership, ingestion,
+access controls, abuse protection, and aggregate-only storage are verified.
+The approved maintainer design stores daily counts at ingestion, never raw event
+rows; this supersedes the earlier 30-day raw-event retention proposal. The
+[Cloudflare Worker implementation](collector/README.md) passed HTTPS, synthetic,
+manual Claude Desktop delivery and live missing-storage verification. The owner
+approved enabling collection for explicitly consenting clients with this release.
+The collector and network
+infrastructure can observe source IPs and arrival times; access-log retention
+must be documented too. Client code cannot enforce server-side deletion, and
+this is not an anonymity guarantee. Shared-host operators must obtain appropriate
+consent from affected users; a process environment setting is not individual consent.
+
+See the [telemetry spec](docs/specs/v080-command-telemetry.md) and
+[release plan](docs/plans/task-18-v080-command-telemetry.md).
+
+### Maintainer Usage Dashboard
+
+[Open the private dashboard](https://whoop-mcp-dashboard.whoop-ai-mcp.workers.dev).
+Cloudflare Access and Worker-side JWT verification restrict it to the configured
+owner email. It reads daily aggregate counts only, with 7/30/90-day filters,
+command/tool/prompt rankings, success/error outcomes and package-version filters.
+No unique users or installations are measured. Owner sign-in is used only for
+dashboard authorization, not usage analytics.
+
+Synthetic events have been removed; the six actual Desktop events are preserved.
+These real calls came from the owner's verification session. No prompt events
+have been collected yet. Deploying a dashboard
+does not opt any client in. See [operator notes](collector/README.md#private-dashboard)
+for configuration, query limits and rollback.
 
 ## Contributing
 
