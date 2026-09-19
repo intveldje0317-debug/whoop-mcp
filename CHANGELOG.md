@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-19
+
+### Added
+- One-time telemetry consent during interactive setup, defaulting to No. The
+  choice is saved in client configuration; `setup --telemetry=on|off` supports
+  explicit scripted choices. Unattended startup remains off without opt-in.
+- Private Cloudflare-hosted usage dashboard with owner-only Access/JWT validation,
+  daily trends, activity rankings, error rates and package-version filters. No
+  unique-user tracking; existing test aggregates remain identified as test activity.
+- Opt-in named MCP prompt-template retrieval counts, with strict allowlists and
+  a row-preserving aggregate migration. No prompt text, arguments or chat content.
+- Opt-in CLI command and MCP tool usage telemetry. Requires
+  `WHOOP_MCP_TELEMETRY=1` and an explicit HTTPS collector URL; no default collector.
+- Local-only `telemetry status` command. `DO_NOT_TRACK=1` and aggregate privacy
+  override opt-in; `doctor` remains strictly local.
+- Strict usage-event allowlists, no health data or identifiers, bounded best-effort
+  delivery, and a hosted-collector release gate covering retention and access logs.
+- Maintainer collector implementation: strict bounded ingestion,
+  aggregate-only D1 counts, identifier-free throttling, and a default-off kill
+  switch. Synthetic and manual Claude Desktop delivery and live storage-failure
+  handling were verified. The owner approved collection for consenting clients
+  at release; synthetic counts were removed and six actual Desktop events preserved.
+
+### Fixed
+- Setup preserves saved telemetry decisions, custom endpoints and privacy settings
+  when credentials change. Invalid optional telemetry endpoints disable collection
+  without blocking setup. Setup failures and explicit opt-outs never send events.
+- Claude Code registration places environment flags before the executable separator.
+
+### Privacy and Operations
+- No default-on tracking, user IDs, installation IDs, chat content, prompt arguments,
+  health data or raw event storage. `DO_NOT_TRACK=1`, explicit opt-out and aggregate
+  privacy suppress collection. Setup supplies the maintainer HTTPS endpoint only
+  after explicit consent; MCP startup does not prompt or assume consent.
+- Collector and dashboard tooling remain outside the npm client artifact. Root
+  runtime dependencies are unchanged. Collector/dashboard CI runs on Node 22;
+  the MCP client remains tested on Node 20 and 22.
+- Upgraded Vitest and its coverage provider together to 4.1.11, resolving the
+  redirect-mock path-traversal advisory (GHSA-82fw-gwwq-j7x9). Full client and
+  private collector dependency audits report zero known vulnerabilities; CI now
+  audits development dependencies too.
+
+### Verification
+- 870 client tests across 47 files and 77 collector/dashboard tests pass.
+- Client line coverage with Vitest 4: 95.40% overall, 98.62% API and 98.54% auth.
+- Lint, typecheck, formatting, build, runtime audit and npm package/publish
+  dry-runs pass. Consent persistence and opt-out regressions received final approval.
+
 ## [0.7.1] - 2026-09-19
 
 ### Fixed
@@ -216,7 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI entry point** — `npx whoop-mcp` with environment variable configuration
 - **202 tests** with full coverage of auth, API client, tools, and error handling
 
-[Unreleased]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/shashankswe2020-ux/whoop-mcp/compare/v0.6.0...v0.6.1

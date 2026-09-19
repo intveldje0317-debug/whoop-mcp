@@ -1,8 +1,98 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createWhoopServer } from "../src/server.js";
 import { analyticsClient } from "./helpers/analytics-fixtures.js";
+import { createTelemetry } from "../src/telemetry/telemetry.js";
+import type { WhoopClient } from "../src/api/client.js";
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("MCP command telemetry", () => {
+  it.each([
+    "success",
+    "handler_error",
+    "invalid_output",
+    "aggregate",
+    "collector_error",
+    "collector_stalled",
+  ])("records only safe tool outcomes: %s", async (scenario) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    if (scenario === "collector_error") fetchMock.mockRejectedValue(new Error("collector secret"));
+    let stalledSignal: AbortSignal | undefined;
+    if (scenario === "collector_stalled")
+      fetchMock.mockImplementation((_url: string, options: RequestInit) => {
+        stalledSignal = options.signal as AbortSignal;
+        return new Promise((_resolve, reject) => {
+          stalledSignal!.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const telemetry = createTelemetry({
+      WHOOP_MCP_TELEMETRY: "1",
+      WHOOP_MCP_TELEMETRY_ENDPOINT: "https://collector.example/events",
+    });
+    const whoopClient: WhoopClient =
+      scenario === "handler_error"
+        ? { get: vi.fn().mockRejectedValue(new Error("health secret")) }
+        : scenario === "invalid_output"
+          ? { get: vi.fn().mockResolvedValue({ private: "health secret" }) }
+          : scenario === "aggregate"
+            ? analyticsClient()
+            : {
+                get: vi.fn().mockResolvedValue({
+                  user_id: 12345,
+                  email: "jane@example.com",
+                  first_name: "Jane",
+                  last_name: "Doe",
+                }),
+              };
+    const { server } = createWhoopServer(whoopClient, {
+      privacyMode: scenario === "aggregate" ? "aggregate" : "standard",
+      telemetry,
+    });
+    const client = new Client({ name: "telemetry-test", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      expect((await client.callTool({ name: "unknown_private_tool", arguments: {} })).isError).toBe(
+        true
+      );
+      expect(
+        (
+          await client.callTool({
+            name: "get_sleep_by_id",
+            arguments: { id: "private invalid id" },
+          })
+        ).isError
+      ).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const name = scenario === "aggregate" ? "get_baselines" : "get_profile";
+      const result = await client.callTool({ name, arguments: {} });
+      const failed = scenario === "handler_error" || scenario === "invalid_output";
+      expect(Boolean(result.isError)).toBe(failed);
+      if (scenario === "collector_stalled") expect(stalledSignal?.aborted).toBe(false);
+      await telemetry.flush();
+      if (scenario === "aggregate") expect(fetchMock).not.toHaveBeenCalled();
+      else {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const options = fetchMock.mock.calls[0]![1] as RequestInit;
+        expect(JSON.parse(options.body as string)).toEqual({
+          schema_version: 1,
+          package_version: expect.any(String),
+          kind: "tool",
+          name,
+          outcome: failed ? "error" : "success",
+        });
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
 
 async function connected(
   aggregate: boolean,

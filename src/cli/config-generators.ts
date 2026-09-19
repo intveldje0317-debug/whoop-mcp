@@ -17,6 +17,10 @@ export type ClientTarget = "claude-desktop" | "claude-code" | "codex" | "copilot
 export interface ServerEnv {
   readonly WHOOP_CLIENT_ID: string;
   readonly WHOOP_CLIENT_SECRET: string;
+  readonly WHOOP_MCP_TELEMETRY?: string;
+  readonly WHOOP_MCP_TELEMETRY_ENDPOINT?: string;
+  readonly DO_NOT_TRACK?: string;
+  readonly WHOOP_MCP_PRIVACY_MODE?: string;
 }
 
 export interface ClaudeDesktopServerEntry {
@@ -72,6 +76,7 @@ export function generateClaudeDesktopEntry(env: ServerEnv): ClaudeDesktopServerE
     env: {
       WHOOP_CLIENT_ID: env.WHOOP_CLIENT_ID,
       WHOOP_CLIENT_SECRET: env.WHOOP_CLIENT_SECRET,
+      ...telemetrySettings(env),
     },
   };
 }
@@ -100,7 +105,8 @@ export function mergeClaudeDesktopConfig(
 export function generateClaudeCodeCommand(env: ServerEnv): string {
   const id = shellQuote(env.WHOOP_CLIENT_ID);
   const secret = shellQuote(env.WHOOP_CLIENT_SECRET);
-  return `claude mcp add ${SERVER_NAME} -- npx -y whoop-ai-mcp -e WHOOP_CLIENT_ID=${id} -e WHOOP_CLIENT_SECRET=${secret}`;
+  const telemetry = telemetryFlags(env, "-e");
+  return `claude mcp add ${SERVER_NAME} -e WHOOP_CLIENT_ID=${id} -e WHOOP_CLIENT_SECRET=${secret}${telemetry} -- npx -y whoop-ai-mcp`;
 }
 
 /**
@@ -111,7 +117,7 @@ export function generateClaudeCodeCommand(env: ServerEnv): string {
 export function generateCodexCommand(env: ServerEnv): string {
   const id = shellQuote(env.WHOOP_CLIENT_ID);
   const secret = shellQuote(env.WHOOP_CLIENT_SECRET);
-  return `codex mcp add ${SERVER_NAME} --env WHOOP_CLIENT_ID=${id} --env WHOOP_CLIENT_SECRET=${secret} -- npx -y whoop-ai-mcp`;
+  return `codex mcp add ${SERVER_NAME} --env WHOOP_CLIENT_ID=${id} --env WHOOP_CLIENT_SECRET=${secret}${telemetryFlags(env, "--env")} -- npx -y whoop-ai-mcp`;
 }
 
 /**
@@ -127,6 +133,7 @@ export function generateCopilotCommand(env: ServerEnv): string {
     env: {
       WHOOP_CLIENT_ID: env.WHOOP_CLIENT_ID,
       WHOOP_CLIENT_SECRET: env.WHOOP_CLIENT_SECRET,
+      ...telemetrySettings(env),
     },
   });
   return `code --add-mcp ${shellQuote(payload)}`;
@@ -138,4 +145,21 @@ export function generateCopilotCommand(env: ServerEnv): string {
  */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function telemetrySettings(env: ServerEnv): Partial<ServerEnv> {
+  return {
+    ...(env.WHOOP_MCP_TELEMETRY !== undefined
+      ? { WHOOP_MCP_TELEMETRY: env.WHOOP_MCP_TELEMETRY }
+      : {}),
+    ...(env.WHOOP_MCP_TELEMETRY_ENDPOINT !== undefined
+      ? { WHOOP_MCP_TELEMETRY_ENDPOINT: env.WHOOP_MCP_TELEMETRY_ENDPOINT }
+      : {}),
+  };
+}
+
+function telemetryFlags(env: ServerEnv, flag: string): string {
+  return Object.entries(telemetrySettings(env))
+    .map(([key, value]) => ` ${flag} ${key}=${shellQuote(value)}`)
+    .join("");
 }

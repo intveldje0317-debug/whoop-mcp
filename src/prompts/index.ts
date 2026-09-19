@@ -8,6 +8,7 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Telemetry } from "../telemetry/telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Prompt definitions
@@ -16,7 +17,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 /**
  * Register all MCP prompts on the server.
  */
-export function registerPrompts(server: McpServer): void {
+export function registerPrompts(server: McpServer, telemetry?: Pick<Telemetry, "record">): void {
+  function record(name: string): void {
+    void Promise.resolve()
+      .then(() => telemetry?.record({ kind: "prompt", name, outcome: "success" }))
+      .catch(() => {});
+  }
   // -------------------------------------------------------------------------
   // Prompt 1: weekly_health_review
   // -------------------------------------------------------------------------
@@ -31,6 +37,7 @@ export function registerPrompts(server: McpServer): void {
     },
     (args) => {
       const days = args.days ?? "7";
+      record("weekly_health_review");
       return {
         messages: [
           {
@@ -66,6 +73,7 @@ export function registerPrompts(server: McpServer): void {
         "Analyze recent sleep patterns and quality — identifies trends in duration, performance, and efficiency.",
     },
     () => {
+      record("sleep_analysis");
       return {
         messages: [
           {
@@ -100,6 +108,7 @@ export function registerPrompts(server: McpServer): void {
         "Analyze how recovery is trending — tracks HRV, resting heart rate, and recovery score over time.",
     },
     () => {
+      record("recovery_trend");
       return {
         messages: [
           {
@@ -135,6 +144,7 @@ export function registerPrompts(server: McpServer): void {
         "Summarize recent workouts and strain — shows training volume, sport breakdown, and strain patterns.",
     },
     () => {
+      record("workout_recap");
       return {
         messages: [
           {
@@ -169,6 +179,7 @@ export function registerPrompts(server: McpServer): void {
         "Quick health status check — uses cached resource data for an instant snapshot of current recovery, sleep, and strain.",
     },
     () => {
+      record("health_check");
       return {
         messages: [
           {
