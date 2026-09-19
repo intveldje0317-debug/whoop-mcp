@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { realpathSync } from "node:fs";
 import { privacyModeSchema } from "./privacy.js";
+import { createTelemetry, type Telemetry } from "./telemetry/telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,7 +101,7 @@ function parseAllowedOrigins(): string[] {
 // Main
 // ---------------------------------------------------------------------------
 
-export async function main(): Promise<void> {
+export async function main(telemetry?: Telemetry): Promise<void> {
   const privacyMode = privacyModeSchema.parse(process.env.WHOOP_MCP_PRIVACY_MODE ?? "standard");
   // 1. Parse transport + logging configuration
   const transportMode = parseTransport();
@@ -147,7 +148,11 @@ export async function main(): Promise<void> {
 
   // 5. Create the MCP server with all WHOOP tools and resources
   const disableResources = process.env.WHOOP_MCP_DISABLE_RESOURCES === "1";
-  const { server } = createWhoopServer(client, { disableResources, privacyMode });
+  const { server } = createWhoopServer(client, {
+    disableResources,
+    privacyMode,
+    ...(telemetry?.status.enabled ? { telemetry } : {}),
+  });
 
   // 6. Connect transports based on MCP_TRANSPORT mode
   const httpResults: HttpServerResult[] = [];
@@ -287,34 +292,58 @@ function isMainModule(): boolean {
   }
 }
 
-if (isMainModule()) {
-  const subcommand = process.argv[2];
-
+export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
+  const subcommand = args[0];
   if (subcommand === "doctor") {
-    void import("./cli/doctor.js")
-      .then(async ({ runDoctor }) => {
-        process.exitCode = await runDoctor(process.argv.slice(3));
-      })
-      .catch(() => {
-        console.error("Local diagnostics failed.");
-        process.exitCode = 1;
-      });
-  } else if (subcommand === "setup") {
-    // Lazy-load so the setup CLI's deps aren't pulled into the hot stdio path.
-    void (async (): Promise<void> => {
-      try {
-        const { runSetup, parseSetupArgs } = await import("./cli/setup.js");
-        const opts = parseSetupArgs(process.argv.slice(3));
-        await runSetup(opts);
-      } catch (error: unknown) {
-        console.error(`Setup failed: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      }
-    })();
-  } else {
-    main().catch((error: unknown) => {
-      console.error("Fatal error:", error);
-      process.exit(1);
-    });
+    try {
+      const { runDoctor } = await import("./cli/doctor.js");
+      return await runDoctor(args.slice(1));
+    } catch {
+      console.error("Local diagnostics failed.");
+      return 1;
+    }
   }
+
+  let telemetry = createTelemetry(
+    subcommand === "setup" ? { WHOOP_MCP_TELEMETRY: "0" } : process.env
+  );
+  if (subcommand === "telemetry") {
+    if (args.length !== 2 || args[1] !== "status") {
+      console.error("Usage: whoop-ai-mcp telemetry status");
+      return 1;
+    }
+    process.stdout.write(`${JSON.stringify(telemetry.status)}\n`);
+    return 0;
+  }
+
+  const name = subcommand === "setup" ? "setup" : "serve";
+  let outcome: "success" | "error" = "error";
+  try {
+    if (name === "setup") {
+      const { runSetup, parseSetupArgs } = await import("./cli/setup.js");
+      const consent = await runSetup(parseSetupArgs(args.slice(1)));
+      telemetry = createTelemetry({ ...process.env, WHOOP_MCP_TELEMETRY: "0", ...consent });
+    } else {
+      await main(telemetry);
+    }
+    outcome = "success";
+    return 0;
+  } catch (error: unknown) {
+    if (name === "setup") {
+      console.error(`Setup failed: ${error instanceof Error ? error.message : String(error)}`);
+    } else console.error("Fatal error:", error);
+    return 1;
+  } finally {
+    telemetry.record({ kind: "command", name, outcome });
+    await telemetry.flush();
+  }
+}
+
+if (isMainModule()) {
+  void runCli().then((exitCode) => {
+    process.exitCode = exitCode;
+    if (exitCode !== 0 && process.argv[2] !== "doctor" && process.argv[2] !== "telemetry") {
+      process.exit(exitCode);
+    }
+  });
 }

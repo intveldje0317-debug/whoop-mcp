@@ -37,6 +37,7 @@ import {
   mergeClaudeDesktopConfig,
   type ClaudeDesktopConfig,
   type ClientTarget,
+  type ServerEnv,
 } from "./config-generators.js";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface SetupOptions {
+  readonly telemetry?: "on" | "off";
   readonly clientId?: string;
   readonly clientSecret?: string;
   readonly client?: ClientTarget;
@@ -68,6 +70,7 @@ export interface SetupOptions {
  */
 export function parseSetupArgs(argv: readonly string[]): SetupOptions {
   const out: {
+    telemetry?: "on" | "off";
     clientId?: string;
     clientSecret?: string;
     client?: ClientTarget;
@@ -90,6 +93,12 @@ export function parseSetupArgs(argv: readonly string[]): SetupOptions {
     };
 
     switch (key) {
+      case "--telemetry": {
+        const value = valueAt();
+        if (value !== "on" && value !== "off") throw new Error("--telemetry must be on or off");
+        out.telemetry = value;
+        break;
+      }
       case "--client-id":
         out.clientId = valueAt();
         break;
@@ -225,6 +234,7 @@ async function promptSecret(io: PromptIO, question: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 export interface RunSetupDeps {
+  readonly confirmTelemetry?: (io: PromptIO) => Promise<boolean>;
   readonly io?: PromptIO;
   readonly authenticate?: (config: OAuthConfig) => Promise<string>;
   /** Fetch the profile after authenticate() to prove the access token works. */
@@ -238,6 +248,19 @@ export interface RunSetupDeps {
 }
 
 const DEFAULT_DEPS: Required<Omit<RunSetupDeps, "io">> & { io: PromptIO } = {
+  confirmTelemetry: async (io) => {
+    const readline = createInterface({ input: io.input, output: io.output });
+    try {
+      return await new Promise<boolean>((resolve) => {
+        readline.once("close", () => resolve(false));
+        readline.question("Share this usage metadata? [y/N]: ", (answer) =>
+          resolve(/^(y|yes)$/i.test(answer.trim()))
+        );
+      });
+    } finally {
+      readline.close();
+    }
+  },
   io: { input: process.stdin, output: process.stdout },
   authenticate,
   fetchProfile: defaultFetchProfile,
@@ -273,7 +296,10 @@ async function defaultFetchProfile(accessToken: string): Promise<unknown> {
  * Run the setup wizard. Resolves after writing config / printing instructions,
  * or rejects with a human-readable Error if anything goes wrong.
  */
-export async function runSetup(options: SetupOptions = {}, deps: RunSetupDeps = {}): Promise<void> {
+export async function runSetup(
+  options: SetupOptions = {},
+  deps: RunSetupDeps = {}
+): Promise<Partial<ServerEnv>> {
   const merged: Required<Omit<RunSetupDeps, "io">> & { io: PromptIO } = {
     ...DEFAULT_DEPS,
     ...deps,
@@ -315,11 +341,33 @@ export async function runSetup(options: SetupOptions = {}, deps: RunSetupDeps = 
     process.env.WHOOP_CLIENT_SECRET = existingCreds.clientSecret;
     if (options.verify) {
       await verifyCredentials(existingCreds, merged, out);
-      out.write("Existing config verified — no changes made.\n");
+      out.write("Existing config verified.\n");
     } else {
       out.write("Re-run with --verify to confirm credentials work.\n");
     }
-    return;
+    const existing = JSON.parse(
+      await merged.fs.readFile(existingConfigPath, "utf8")
+    ) as ClaudeDesktopConfig;
+    const savedEnv = existing.mcpServers?.whoop?.env;
+    const consent = await chooseTelemetry(options, merged, savedEnv);
+    if (
+      options.telemetry !== undefined ||
+      (savedEnv?.WHOOP_MCP_TELEMETRY === "1" && consent.WHOOP_MCP_TELEMETRY === "0") ||
+      (savedEnv?.WHOOP_MCP_TELEMETRY === undefined && (merged.io.input as NodeJS.ReadStream).isTTY)
+    ) {
+      await writeClaudeDesktopConfig(
+        existingConfigPath,
+        {
+          WHOOP_CLIENT_ID: existingCreds.clientId,
+          WHOOP_CLIENT_SECRET: existingCreds.clientSecret,
+          ...consent,
+        },
+        merged.fs,
+        out,
+        true
+      );
+    }
+    return consent;
   }
 
   // --- Step 1: credentials ---
@@ -364,52 +412,65 @@ export async function runSetup(options: SetupOptions = {}, deps: RunSetupDeps = 
   }
 
   // --- Step 3: emit config ---
-  const env = { WHOOP_CLIENT_ID: clientId, WHOOP_CLIENT_SECRET: clientSecret };
+  const savedEnv =
+    target === "claude-desktop"
+      ? await readExistingWhoopEnv(options.configPath ?? claudeDesktopConfigPath(), merged.fs)
+      : undefined;
+  const consent = await chooseTelemetry(options, merged, savedEnv);
+  const env = { WHOOP_CLIENT_ID: clientId, WHOOP_CLIENT_SECRET: clientSecret, ...consent };
 
   if (target === "claude-code") {
     out.write("\nRun this command in your shell to register the server:\n\n");
     out.write(`  ${generateClaudeCodeCommand(env)}\n\n`);
-    return;
+    return consent;
   }
 
   if (target === "codex") {
     out.write("\nRun this command in your shell to register the server with Codex:\n\n");
     out.write(`  ${generateCodexCommand(env)}\n\n`);
-    return;
+    return consent;
   }
 
   if (target === "copilot") {
     out.write("\nRun this command to register the server with GitHub Copilot in VS Code:\n\n");
     out.write(`  ${generateCopilotCommand(env)}\n\n`);
-    return;
+    return consent;
   }
 
   // claude-desktop — read existing, backup, merge, write atomically
   const path = options.configPath ?? claudeDesktopConfigPath();
   await writeClaudeDesktopConfig(path, env, merged.fs, out);
+  return consent;
 }
 
 async function readExistingWhoopCreds(
   path: string,
   filesystem: Required<RunSetupDeps>["fs"]
 ): Promise<{ clientId: string; clientSecret: string } | null> {
+  const env = await readExistingWhoopEnv(path, filesystem);
+  const clientId = env?.WHOOP_CLIENT_ID?.trim();
+  const clientSecret = env?.WHOOP_CLIENT_SECRET?.trim();
+  if (!clientId || !clientSecret) return null;
+  return { clientId, clientSecret };
+}
+
+async function readExistingWhoopEnv(
+  path: string,
+  filesystem: Required<RunSetupDeps>["fs"]
+): Promise<ServerEnv | undefined> {
   let raw: string;
   try {
     raw = await filesystem.readFile(path, "utf8");
   } catch {
-    return null;
+    return undefined;
   }
   let parsed: ClaudeDesktopConfig;
   try {
     parsed = JSON.parse(raw) as ClaudeDesktopConfig;
   } catch {
-    return null;
+    return undefined;
   }
-  const entry = parsed.mcpServers?.whoop;
-  const clientId = entry?.env?.WHOOP_CLIENT_ID?.trim();
-  const clientSecret = entry?.env?.WHOOP_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
+  return parsed.mcpServers?.whoop?.env;
 }
 
 async function verifyCredentials(
@@ -439,9 +500,10 @@ async function verifyCredentials(
 
 async function writeClaudeDesktopConfig(
   path: string,
-  env: { WHOOP_CLIENT_ID: string; WHOOP_CLIENT_SECRET: string },
+  env: ServerEnv,
   filesystem: Required<RunSetupDeps>["fs"],
-  out: NodeJS.WritableStream
+  out: NodeJS.WritableStream,
+  preserveEntry = false
 ): Promise<void> {
   await filesystem.mkdir(dirname(path), { recursive: true });
 
@@ -462,7 +524,12 @@ async function writeClaudeDesktopConfig(
     }
   }
 
-  const merged = mergeClaudeDesktopConfig(existing, generateClaudeDesktopEntry(env));
+  const original = existing?.mcpServers?.whoop;
+  const entry =
+    preserveEntry && original
+      ? { ...original, env: { ...original.env, ...env } }
+      : { ...generateClaudeDesktopEntry(env), env: { ...original?.env, ...env } };
+  const merged = mergeClaudeDesktopConfig(existing, entry);
   const serialized = `${JSON.stringify(merged, null, 2)}\n`;
 
   // Backup existing file before overwriting (so a write failure is recoverable)
@@ -496,4 +563,57 @@ async function writeClaudeDesktopConfig(
   out.write(`\nClaude Desktop config written: ${path}\n`);
   if (backedUp) out.write(`Previous config backed up to: ${backupPath}\n`);
   out.write("Restart Claude Desktop to load the new server.\n\n");
+}
+
+async function chooseTelemetry(
+  options: SetupOptions,
+  deps: Required<Omit<RunSetupDeps, "io">> & { io: PromptIO },
+  existing?: ServerEnv
+): Promise<Partial<ServerEnv>> {
+  const endpoint =
+    existing?.WHOOP_MCP_TELEMETRY_ENDPOINT ??
+    process.env.WHOOP_MCP_TELEMETRY_ENDPOINT ??
+    "https://whoop-mcp-telemetry.whoop-ai-mcp.workers.dev/events";
+  const suppressed =
+    process.env.DO_NOT_TRACK === "1" ||
+    existing?.DO_NOT_TRACK === "1" ||
+    (process.env.WHOOP_MCP_PRIVACY_MODE ?? "standard") !== "standard" ||
+    (existing?.WHOOP_MCP_PRIVACY_MODE ?? "standard") !== "standard" ||
+    (process.env.WHOOP_MCP_TELEMETRY !== undefined && process.env.WHOOP_MCP_TELEMETRY !== "1");
+  if (suppressed || options.telemetry === "off") return { WHOOP_MCP_TELEMETRY: "0" };
+  if (existing?.WHOOP_MCP_TELEMETRY !== undefined && options.telemetry === undefined)
+    return {
+      WHOOP_MCP_TELEMETRY: existing.WHOOP_MCP_TELEMETRY,
+      ...(existing.WHOOP_MCP_TELEMETRY_ENDPOINT
+        ? { WHOOP_MCP_TELEMETRY_ENDPOINT: existing.WHOOP_MCP_TELEMETRY_ENDPOINT }
+        : {}),
+    };
+  let enabled = options.telemetry === "on" || process.env.WHOOP_MCP_TELEMETRY === "1";
+  if (!enabled && !(deps.io.input as NodeJS.ReadStream).isTTY) return { WHOOP_MCP_TELEMETRY: "0" };
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      endpoint.includes("?") ||
+      endpoint.includes("#")
+    ) {
+      throw new Error("Invalid endpoint");
+    }
+  } catch {
+    deps.io.output.write(
+      "Telemetry remains off: endpoint must be HTTPS without credentials, query, or fragment.\n"
+    );
+    return { WHOOP_MCP_TELEMETRY: "0" };
+  }
+  deps.io.output.write(
+    `\nOptional usage telemetry to ${url.href}: command/tool/prompt names, outcomes and package version only. No health data, chat text, arguments or identifiers. Cloudflare receives network metadata. Disable with WHOOP_MCP_TELEMETRY=0 or DO_NOT_TRACK=1.\n`
+  );
+  if (!enabled && (deps.io.input as NodeJS.ReadStream).isTTY)
+    enabled = await deps.confirmTelemetry(deps.io);
+  return enabled
+    ? { WHOOP_MCP_TELEMETRY: "1", WHOOP_MCP_TELEMETRY_ENDPOINT: url.href }
+    : { WHOOP_MCP_TELEMETRY: "0" };
 }

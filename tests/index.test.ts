@@ -53,6 +53,16 @@ vi.mock("@modelcontextprotocol/sdk/server/stdio.js", () => ({
 
 const mockCreateHttpServer = vi.fn();
 const mockHttpClose = vi.fn(() => Promise.resolve());
+const mockRunSetup = vi.fn();
+const mockRunDoctor = vi.fn();
+
+vi.mock("../src/cli/setup.js", () => ({
+  parseSetupArgs: () => ({}),
+  runSetup: (...args: unknown[]) => mockRunSetup(...args),
+}));
+vi.mock("../src/cli/doctor.js", () => ({
+  runDoctor: (...args: unknown[]) => mockRunDoctor(...args),
+}));
 
 vi.mock("../src/transport/http.js", () => ({
   createHttpServer: (...args: unknown[]) => mockCreateHttpServer(...args),
@@ -110,12 +120,104 @@ describe("main() entry point", () => {
     delete process.env.MCP_ALLOWED_ORIGINS;
     delete process.env.LOG_FORMAT;
     delete process.env.WHOOP_MCP_PRIVACY_MODE;
+    delete process.env.WHOOP_MCP_TELEMETRY;
+    delete process.env.WHOOP_MCP_TELEMETRY_ENDPOINT;
+    delete process.env.DO_NOT_TRACK;
   });
 
   afterEach(() => {
     // Restore env
     process.env = { ...originalEnv };
     consoleErrorSpy.mockRestore();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  describe("CLI telemetry", () => {
+    function enableTelemetry(): ReturnType<typeof vi.fn> {
+      process.env.WHOOP_MCP_TELEMETRY = "1";
+      process.env.WHOOP_MCP_TELEMETRY_ENDPOINT = "https://collector.example/events";
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    it.each(["serve", "setup"])("records %s success without arguments", async (name) => {
+      setupHappyPath();
+      mockRunSetup.mockResolvedValue({
+        WHOOP_MCP_TELEMETRY: "1",
+        WHOOP_MCP_TELEMETRY_ENDPOINT: "https://collector.example/events",
+      });
+      const fetchMock = enableTelemetry();
+      const { runCli } = await import("../src/index.js");
+      expect(await runCli(name === "serve" ? [] : ["setup", "--client-secret", "secret"])).toBe(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const options = fetchMock.mock.calls[0]![1] as RequestInit;
+      expect(JSON.parse(options.body as string)).toEqual({
+        schema_version: 1,
+        package_version: expect.any(String),
+        kind: "command",
+        name,
+        outcome: "success",
+      });
+      if (name === "serve")
+        expect(mockCreateWhoopServer).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            telemetry: expect.objectContaining({ record: expect.any(Function) }),
+          })
+        );
+    });
+
+    it.each(["serve", "setup"])("preserves %s failure despite collector failure", async (name) => {
+      setupHappyPath();
+      mockAuthenticate.mockRejectedValue(new Error("authentication secret"));
+      mockRunSetup.mockRejectedValue(new Error("setup secret"));
+      const fetchMock = enableTelemetry().mockRejectedValue(new Error("collector secret"));
+      const { runCli } = await import("../src/index.js");
+      expect(await runCli(name === "serve" ? [] : ["setup"])).toBe(1);
+      if (name === "setup") {
+        expect(fetchMock).not.toHaveBeenCalled();
+        return;
+      }
+      const options = fetchMock.mock.calls[0]![1] as RequestInit;
+      expect(JSON.parse(options.body as string)).toMatchObject({
+        kind: "command",
+        name,
+        outcome: "error",
+      });
+      expect(options.body).not.toContain("secret");
+    });
+
+    it("keeps doctor and telemetry status local even when opted in", async () => {
+      const fetchMock = enableTelemetry();
+      const log = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+      mockRunDoctor.mockResolvedValue(2);
+      const { runCli } = await import("../src/index.js");
+      expect(await runCli(["doctor", "--json"])).toBe(2);
+      expect(mockRunDoctor).toHaveBeenCalledWith(["--json"]);
+      expect(await runCli(["telemetry", "status"])).toBe(0);
+      expect(JSON.parse(log.mock.calls[0]![0] as string)).toEqual({
+        enabled: true,
+        reason: "enabled",
+      });
+      expect(await runCli(["telemetry", "enable"])).toBe(1);
+      expect(mockAuthenticate).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "1"])(
+      "does not send on default/opt-out configuration: %s",
+      async (optOut) => {
+        setupHappyPath();
+        const fetchMock = enableTelemetry();
+        if (optOut) process.env.DO_NOT_TRACK = optOut;
+        else delete process.env.WHOOP_MCP_TELEMETRY;
+        const { runCli } = await import("../src/index.js");
+        expect(await runCli([])).toBe(0);
+        expect(fetchMock).not.toHaveBeenCalled();
+      }
+    );
   });
 
   // -------------------------------------------------------------------------

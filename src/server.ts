@@ -30,6 +30,7 @@ import { readFileSync } from "node:fs";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { getBaselines, baselinesInputSchema } from "./tools/get-baselines.js";
 import { getSleepDebt, sleepDebtInputSchema } from "./tools/get-sleep-debt.js";
+import type { Telemetry } from "./telemetry/telemetry.js";
 import {
   outputSchemas,
   aggregateOutputSchemas,
@@ -160,6 +161,7 @@ async function safeTool<T>(fn: () => Promise<T>): Promise<CallToolResult> {
 /** Options for createWhoopServer */
 export interface CreateServerOptions {
   privacyMode?: PrivacyMode;
+  telemetry?: Pick<Telemetry, "record">;
   /** Disable MCP resource registration (set via WHOOP_MCP_DISABLE_RESOURCES=1) */
   disableResources?: boolean;
 }
@@ -200,19 +202,30 @@ export function createWhoopServer(client: WhoopClient, options?: CreateServerOpt
       name,
       { ...config, inputSchema: config.inputSchema ?? z.object({}), outputSchema: schema },
       async (args) => {
-        const result = await handler(args as z.infer<z.ZodObject<Shape>>);
-        if (result.isError) return result;
-        const validated = schema.safeParse(result.structuredContent);
-        if (!validated.success)
-          return {
-            isError: true,
-            content: [
-              { type: "text", text: "WHOOP data did not match the expected output contract." },
-            ],
-          };
-        return jsonContent(
-          privacyMode === "aggregate" ? projectAggregateDates(validated.data) : validated.data
-        );
+        let outcome: "success" | "error" = "error";
+        try {
+          const result = await handler(args as z.infer<z.ZodObject<Shape>>);
+          if (result.isError) return result;
+          const validated = schema.safeParse(result.structuredContent);
+          if (!validated.success)
+            return {
+              isError: true,
+              content: [
+                { type: "text", text: "WHOOP data did not match the expected output contract." },
+              ],
+            };
+          const response = jsonContent(
+            privacyMode === "aggregate" ? projectAggregateDates(validated.data) : validated.data
+          );
+          outcome = "success";
+          return response;
+        } finally {
+          if (privacyMode === "standard") {
+            void Promise.resolve()
+              .then(() => options?.telemetry?.record({ kind: "tool", name, outcome }))
+              .catch(() => {});
+          }
+        }
       }
     );
   }
@@ -488,7 +501,7 @@ export function createWhoopServer(client: WhoopClient, options?: CreateServerOpt
   // -------------------------------------------------------------------------
   // MCP Prompts
   // -------------------------------------------------------------------------
-  if (privacyMode === "standard") registerPrompts(server);
+  if (privacyMode === "standard") registerPrompts(server, options?.telemetry);
 
   return { server };
 }
