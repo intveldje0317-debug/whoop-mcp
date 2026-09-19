@@ -47,3 +47,31 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  collector:
+    name: Collector and Dashboard
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            collector/package-lock.json
+      - name: Install dependencies
+        run: npm ci && npm ci --prefix collector
+      - name: Verify collector and dashboard
+        run: |
+          npm --prefix collector run typecheck
+          npm --prefix collector run lint
+          npm --prefix collector run format:check
+          npm --prefix collector test
+          npm --prefix collector run build
+          npm --prefix collector run build:dashboard
+          npm audit --prefix collector --audit-level=high
