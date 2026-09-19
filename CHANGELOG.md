@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-19
+
+### Changed
+- Reworked the README into a concise, visual introduction with a demo, example
+  questions, a guided quickstart and links to detailed documentation.
+- Moved installation, configuration, tool contracts, privacy, telemetry,
+  troubleshooting, hosting and development guidance into eight topic guides
+  under `references/`.
+- Made installation examples version-independent with `@latest` and linked to
+  the latest release rather than a fixed package version.
+- Updated the public site with consent-based telemetry details, current client
+  setup commands, privacy guidance and links to the new reference guides.
+- Improved site command wrapping and accessible copy feedback on narrow screens.
+
+### Fixed
+- Corrected documentation for pagination, missing measurements, cache behavior,
+  token bootstrap, authenticated health probes and release publication.
+- Removed outdated setup transcripts and clarified collector retention and the
+  maintainer-only dashboard. Preserved the CLI's configuration-help anchor.
+
+No WHOOP API, OAuth, token-storage or telemetry-policy behavior changes.
+
 ## [0.8.0] - 2026-09-19
 
 ### Added
