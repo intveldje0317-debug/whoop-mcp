@@ -28,12 +28,7 @@ import type { TrendDirectionResult } from "./stats-utils.js";
 
 /** Supported metric names */
 export type TrendMetric =
-  | "recovery"
-  | "hrv"
-  | "rhr"
-  | "sleep_duration"
-  | "sleep_performance"
-  | "strain";
+  "recovery" | "hrv" | "rhr" | "sleep_duration" | "sleep_performance" | "strain";
 
 /** Input parameters for get_trend */
 export interface GetTrendParams {
