@@ -92,7 +92,11 @@ function setupHappyPath(): void {
   const mockServer = { connect: mockConnect };
   mockCreateWhoopServer.mockReturnValue({ server: mockServer });
   mockConnect.mockResolvedValue(undefined);
-  MockStdioServerTransport.mockReturnValue(mockStdioTransportInstance);
+  MockStdioServerTransport.mockImplementation(
+    class {
+      _mock = true;
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------

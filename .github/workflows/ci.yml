@@ -41,9 +41,9 @@ jobs:
         if: matrix.node-version == '22.x'
         run: npm run test:coverage
 
-      - name: Audit production dependencies
+      - name: Audit all dependencies
         if: matrix.node-version == '22.x'
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=low
 
       - name: Build
         run: npm run build
@@ -74,4 +74,4 @@ jobs:
           npm --prefix collector test
           npm --prefix collector run build
           npm --prefix collector run build:dashboard
-          npm audit --prefix collector --audit-level=high
+          npm audit --prefix collector --audit-level=low

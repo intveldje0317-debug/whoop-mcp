@@ -44,12 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Collector and dashboard tooling remain outside the npm client artifact. Root
   runtime dependencies are unchanged. Collector/dashboard CI runs on Node 22;
   the MCP client remains tested on Node 20 and 22.
-- Three known moderate development-only Vitest audit entries remain; runtime
-  dependencies and the private collector dependency audit are clean.
+- Upgraded Vitest and its coverage provider together to 4.1.11, resolving the
+  redirect-mock path-traversal advisory (GHSA-82fw-gwwq-j7x9). Full client and
+  private collector dependency audits report zero known vulnerabilities; CI now
+  audits development dependencies too.
 
 ### Verification
 - 870 client tests across 47 files and 77 collector/dashboard tests pass.
-- Client line coverage: 96.30% overall, 98.85% API and 98.29% auth.
+- Client line coverage with Vitest 4: 95.40% overall, 98.62% API and 98.54% auth.
 - Lint, typecheck, formatting, build, runtime audit and npm package/publish
   dry-runs pass. Consent persistence and opt-out regressions received final approval.
 

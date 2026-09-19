@@ -18,13 +18,15 @@ outside the release commits.
 
 ## Verification
 
-- 870 client tests across 47 files; line coverage 96.30% overall, API 98.85%,
-  auth 98.29%. Real readline Yes/No/blank and real setup dispatcher paths covered.
+- 870 client tests across 47 files; Vitest 4 line coverage 95.40% overall,
+  API 98.62%, auth 98.54%. Real readline Yes/No/blank and setup dispatcher covered.
 - 77 collector/dashboard tests across five files, including real local Worker/D1,
   row-preserving migration and Access JWT failure cases.
-- Root and collector lint, types, formatting and builds pass. Root runtime audit
-  and full collector audit are clean; three known moderate dev-only Vitest
-  advisory entries remain. No forced major dependency upgrade.
+- Root and collector lint, types, formatting and builds pass. Full dependency
+  audits for both report zero vulnerabilities. At the owner's request, Vitest
+  and coverage were upgraded together to 4.1.11 to fix GHSA-82fw-gwwq-j7x9;
+  one constructor mock was adapted to the documented class API. No production
+  behavior changed. CI audits all dependencies, including development tools.
 - npm pack and publish dry-runs: 187 files, approximately 155 KB packed. Required
   executable/types/telemetry/setup assets present. Collector, dashboard, production
   configurations and token files excluded; client runtime dependencies unchanged.
