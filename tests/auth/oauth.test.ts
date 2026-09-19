@@ -728,6 +728,72 @@ describe("authenticate", () => {
     expect(body.get("code_verifier")).toBeTruthy();
   });
 
+  it.each([
+    ["localhost", "http://localhost:4567/oauth/whoop", "127.0.0.1"],
+    ["IPv4 loopback", "http://127.0.0.1:4567/oauth/whoop", "127.0.0.1"],
+    ["IPv6 loopback", "http://[::1]:4567/oauth/whoop", "::1"],
+  ])("starts the callback server for %s", async (_label, redirectUri, host) => {
+    mockLoadTokens.mockResolvedValueOnce(null);
+    mockSaveTokens.mockResolvedValueOnce(undefined);
+    mockStartCallbackServer.mockReturnValueOnce({
+      port: 4567,
+      result: Promise.resolve({ code: "new-auth-code", state: "mock-state" }),
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(MOCK_TOKEN_RESPONSE),
+    });
+
+    await authenticate({
+      ...TEST_CONFIG,
+      redirectUri,
+    });
+
+    expect(mockStartCallbackServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host,
+        port: 4567,
+        callbackPath: "/oauth/whoop",
+      })
+    );
+  });
+
+  it.each([
+    ["HTTPS", "https://localhost:4567/callback"],
+    ["a non-loopback host", "http://example.com:4567/callback"],
+    ["embedded credentials", "http://user:password@localhost:4567/callback"],
+    ["a query string", "http://localhost:4567/callback?source=whoop"],
+    ["an empty query string", "http://localhost:4567/callback?"],
+    ["a fragment", "http://localhost:4567/callback#fragment"],
+    ["an empty fragment", "http://localhost:4567/callback#"],
+    ["a normalized numeric host", "http://2130706433:4567/callback"],
+    ["port zero", "http://localhost:0/callback"],
+  ])("rejects %s in the local redirect URI", async (_label, redirectUri) => {
+    mockLoadTokens.mockResolvedValueOnce(null);
+
+    await expect(authenticate({ ...TEST_CONFIG, redirectUri })).rejects.toThrow(
+      /WHOOP_REDIRECT_URI/
+    );
+
+    expect(mockStartCallbackServer).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("rejects a callback port that differs from the redirect URI", async () => {
+    mockLoadTokens.mockResolvedValueOnce(null);
+
+    await expect(
+      authenticate({
+        ...TEST_CONFIG,
+        redirectUri: "http://localhost:4567/callback",
+        port: 3000,
+      })
+    ).rejects.toThrow(/callback port must match WHOOP_REDIRECT_URI/);
+
+    expect(mockStartCallbackServer).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it("falls back to full OAuth flow when refresh fails", async () => {
     const expiredTokens: OAuthTokens = {
       ...VALID_TOKENS,

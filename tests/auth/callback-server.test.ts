@@ -43,6 +43,33 @@ describe("startCallbackServer", () => {
       });
     });
 
+    it("resolves on a configured callback path", async () => {
+      const expectedState = "custom-path-state";
+      const handle = startCallbackServer({
+        host: "127.0.0.1",
+        port: 0,
+        callbackPath: "/oauth/whoop",
+        expectedState,
+        timeoutMs: 5_000,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const callbackUrl = `http://127.0.0.1:${handle.port}/oauth/whoop?code=custom-code&state=${expectedState}`;
+      const response = await fetch(callbackUrl);
+      if (!response.ok) {
+        await fetch(
+          `http://127.0.0.1:${handle.port}/oauth/whoop?code=cleanup-code&state=${expectedState}`
+        );
+      }
+
+      expect(response.ok).toBe(true);
+      await expect(handle.result).resolves.toEqual({
+        code: "custom-code",
+        state: expectedState,
+      });
+    });
+
     it("shuts down the server after receiving the callback", async () => {
       const expectedState = "state-456";
 
