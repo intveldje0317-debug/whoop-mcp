@@ -11,7 +11,22 @@ const aggregate: Aggregate = {
   kind: "tool",
   name: "get_today",
   outcome: "success",
+  error_category: "none",
 };
+
+async function applyMigration(
+  database: Awaited<ReturnType<Miniflare["getD1Database"]>>,
+  name: string
+): Promise<void> {
+  const sql = readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
+  await database.batch(
+    sql
+      .split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean)
+      .map((statement) => database.prepare(statement))
+  );
+}
 
 describe("local D1 aggregate storage", () => {
   let runtime: Miniflare;
@@ -22,7 +37,7 @@ describe("local D1 aggregate storage", () => {
       convertV4MiniflareOptions({
         modules: true,
         script: "export default { fetch() { return new Response(null); } };",
-        d1Databases: ["DB"],
+        d1Databases: ["DB", "MIGRATION_DB"],
         compatibilityDate: "2026-09-15",
         cf: false,
         telemetry: { enabled: false },
@@ -34,6 +49,8 @@ describe("local D1 aggregate storage", () => {
       "utf8"
     );
     await database.prepare(schema).run();
+    await applyMigration(database, "0002-prompts.sql");
+    await applyMigration(database, "0003-error-categories.sql");
   });
 
   afterEach(async () => {
@@ -53,36 +70,32 @@ describe("local D1 aggregate storage", () => {
       "kind",
       "name",
       "outcome",
+      "error_category",
       "count",
     ]);
   });
 
-  it("preserves existing counts when enabling prompt aggregates", async () => {
-    await incrementAggregate(database, aggregate);
-    const migration = readFileSync(
-      new URL("../migrations/0002-prompts.sql", import.meta.url),
-      "utf8"
-    );
-    await database.batch(
-      migration
-        .split(";")
-        .map((sql) => sql.trim())
-        .filter(Boolean)
-        .map((sql) => database.prepare(sql))
-    );
-    await database
+  it("preserves existing counts and marks historical errors unknown", async () => {
+    const migrationDatabase = await runtime.getD1Database("MIGRATION_DB");
+    await applyMigration(migrationDatabase, "0001-aggregates.sql");
+    await migrationDatabase
       .prepare("INSERT INTO daily_counts VALUES (?, ?, ?, ?, ?, ?)")
-      .bind("2026-09-19", "0.8.0", "prompt", "weekly_health_review", "success", 1)
+      .bind("2026-09-19", "0.8.0", "tool", "get_today", "error", 3)
       .run();
-    const rows = await database.prepare("SELECT * FROM daily_counts").all();
-    expect(rows.results).toHaveLength(2);
-    expect(rows.results).toContainEqual({ ...aggregate, count: 1 });
-    expect(rows.results).toContainEqual({
-      ...aggregate,
-      kind: "prompt",
-      name: "weekly_health_review",
-      count: 1,
-    });
+    await applyMigration(migrationDatabase, "0002-prompts.sql");
+    await applyMigration(migrationDatabase, "0003-error-categories.sql");
+
+    expect((await migrationDatabase.prepare("SELECT * FROM daily_counts").all()).results).toEqual([
+      {
+        day: "2026-09-19",
+        package_version: "0.8.0",
+        kind: "tool",
+        name: "get_today",
+        outcome: "error",
+        error_category: "unknown",
+        count: 3,
+      },
+    ]);
   });
 
   it("keeps daily, version, command and outcome dimensions separate", async () => {
@@ -91,11 +104,12 @@ describe("local D1 aggregate storage", () => {
       { ...aggregate, day: "2026-09-20" },
       { ...aggregate, package_version: "0.8.1" },
       { ...aggregate, kind: "command", name: "serve" },
-      { ...aggregate, outcome: "error" },
+      { ...aggregate, outcome: "error", error_category: "unknown" },
+      { ...aggregate, outcome: "error", error_category: "api_rate_limit" },
     ];
     await Promise.all(aggregates.map((row) => incrementAggregate(database, row)));
     const rows = await database.prepare("SELECT * FROM daily_counts").all();
-    expect(rows.results).toHaveLength(5);
+    expect(rows.results).toHaveLength(6);
     expect(rows.results).toEqual(
       expect.arrayContaining(aggregates.map((row) => ({ ...row, count: 1 })))
     );
@@ -130,6 +144,7 @@ describe("local D1 aggregate storage", () => {
       kind: "command",
       name: "serve",
       outcome: "success",
+      error_category: "none",
       count: 1,
     });
   });

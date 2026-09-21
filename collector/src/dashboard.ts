@@ -23,6 +23,18 @@ const rowSchema = z.object({
   kind: z.enum(["command", "tool", "prompt"]),
   name: z.string().max(64),
   outcome: z.enum(["success", "error"]),
+  error_category: z.enum([
+    "none",
+    "unknown",
+    "api_auth",
+    "api_rate_limit",
+    "api_client",
+    "api_server",
+    "network",
+    "invalid_data",
+    "output_contract",
+    "unexpected",
+  ]),
   count: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 const headers = {
@@ -64,10 +76,10 @@ export async function dashboardResponse(
   const endDay = end.toISOString().slice(0, 10);
   try {
     const result = await env.DB.prepare(
-      `SELECT day, package_version, kind, name, outcome, count FROM daily_counts
+      `SELECT day, package_version, kind, name, outcome, error_category, count FROM daily_counts
        WHERE day >= ?1 AND day <= ?2 AND (?3 = 'all' OR kind = ?3)
        AND (?4 = '' OR package_version = ?4)
-       ORDER BY day DESC, package_version, kind, name, outcome LIMIT 5001`
+       ORDER BY day DESC, package_version, kind, name, outcome, error_category LIMIT 5001`
     )
       .bind(startDay, endDay, kind, version ?? "")
       .all();

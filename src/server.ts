@@ -145,12 +145,39 @@ function errorResponse(error: unknown): {
   };
 }
 
+type ToolErrorCategory =
+  | "api_auth"
+  | "api_rate_limit"
+  | "api_client"
+  | "api_server"
+  | "network"
+  | "invalid_data"
+  | "output_contract"
+  | "unexpected";
+
+interface ToolExecution {
+  response: CallToolResult;
+  errorCategory?: ToolErrorCategory;
+}
+
+function classifyToolError(error: unknown): ToolErrorCategory {
+  if (error instanceof WhoopAuthError) return "api_auth";
+  if (error instanceof WhoopApiError) {
+    if (error.statusCode === 401 || error.statusCode === 403) return "api_auth";
+    if (error.statusCode === 429) return "api_rate_limit";
+    return error.statusCode >= 500 ? "api_server" : "api_client";
+  }
+  if (error instanceof WhoopNetworkError) return "network";
+  if (error instanceof z.ZodError || error instanceof RangeError) return "invalid_data";
+  return "unexpected";
+}
+
 /** Wrap a tool handler with error-to-MCP-error conversion */
-async function safeTool<T>(fn: () => Promise<T>): Promise<CallToolResult> {
+async function safeTool<T>(fn: () => Promise<T>): Promise<ToolExecution> {
   try {
-    return jsonContent(await fn());
+    return { response: jsonContent(await fn()) };
   } catch (error: unknown) {
-    return errorResponse(error);
+    return { response: errorResponse(error), errorCategory: classifyToolError(error) };
   }
 }
 
@@ -191,7 +218,7 @@ export function createWhoopServer(client: WhoopClient, options?: CreateServerOpt
   function registerTool<Shape extends z.ZodRawShape>(
     name: string,
     config: { description: string; inputSchema?: z.ZodObject<Shape>; annotations: ToolAnnotations },
-    handler: (args: z.infer<z.ZodObject<Shape>>) => Promise<CallToolResult>
+    handler: (args: z.infer<z.ZodObject<Shape>>) => Promise<ToolExecution>
   ): void {
     const schema = (privacyMode === "aggregate" ? aggregateOutputSchemas : outputSchemas)[name];
     if (!schema) {
@@ -200,20 +227,38 @@ export function createWhoopServer(client: WhoopClient, options?: CreateServerOpt
     }
     server.registerTool(
       name,
-      { ...config, inputSchema: config.inputSchema ?? z.object({}), outputSchema: schema },
+      {
+        ...config,
+        inputSchema: config.inputSchema ?? z.object({}),
+        outputSchema: schema,
+        annotations: {
+          title: name
+            .split("_")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" "),
+          ...config.annotations,
+        },
+      },
       async (args) => {
         let outcome: "success" | "error" = "error";
+        let errorCategory: ToolErrorCategory | undefined;
         try {
-          const result = await handler(args as z.infer<z.ZodObject<Shape>>);
-          if (result.isError) return result;
+          const execution = await handler(args as z.infer<z.ZodObject<Shape>>);
+          const result = execution.response;
+          if (result.isError) {
+            errorCategory = execution.errorCategory ?? "unexpected";
+            return result;
+          }
           const validated = schema.safeParse(result.structuredContent);
-          if (!validated.success)
+          if (!validated.success) {
+            errorCategory = "output_contract";
             return {
               isError: true,
               content: [
                 { type: "text", text: "WHOOP data did not match the expected output contract." },
               ],
             };
+          }
           const response = jsonContent(
             privacyMode === "aggregate" ? projectAggregateDates(validated.data) : validated.data
           );
@@ -222,7 +267,14 @@ export function createWhoopServer(client: WhoopClient, options?: CreateServerOpt
         } finally {
           if (privacyMode === "standard") {
             void Promise.resolve()
-              .then(() => options?.telemetry?.record({ kind: "tool", name, outcome }))
+              .then(() =>
+                options?.telemetry?.record({
+                  kind: "tool",
+                  name,
+                  outcome,
+                  ...(errorCategory ? { error_category: errorCategory } : {}),
+                })
+              )
               .catch(() => {});
           }
         }

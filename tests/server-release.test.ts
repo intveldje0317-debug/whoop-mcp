@@ -4,7 +4,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createWhoopServer } from "../src/server.js";
 import { analyticsClient } from "./helpers/analytics-fixtures.js";
 import { createTelemetry } from "../src/telemetry/telemetry.js";
-import type { WhoopClient } from "../src/api/client.js";
+import {
+  WhoopApiError,
+  WhoopAuthError,
+  WhoopNetworkError,
+  type WhoopClient,
+} from "../src/api/client.js";
+import { z } from "zod";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -85,8 +91,52 @@ describe("MCP command telemetry", () => {
           kind: "tool",
           name,
           outcome: failed ? "error" : "success",
+          ...(failed
+            ? {
+                error_category: scenario === "invalid_output" ? "output_contract" : "unexpected",
+              }
+            : {}),
         });
       }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it.each([
+    [new WhoopAuthError(new Error("private")), "api_auth"],
+    [new WhoopApiError(401, "Unauthorized", null), "api_auth"],
+    [new WhoopApiError(429, "Too Many Requests", null), "api_rate_limit"],
+    [new WhoopApiError(400, "Bad Request", null), "api_client"],
+    [new WhoopApiError(500, "Server Error", null), "api_server"],
+    [new WhoopNetworkError(new Error("private")), "network"],
+    [new z.ZodError([]), "invalid_data"],
+    [new Error("private"), "unexpected"],
+  ])("records a coarse category for %s", async (failure, errorCategory) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const telemetry = createTelemetry({
+      WHOOP_MCP_TELEMETRY: "1",
+      WHOOP_MCP_TELEMETRY_ENDPOINT: "https://collector.example/events",
+    });
+    const { server } = createWhoopServer(
+      { get: vi.fn().mockRejectedValue(failure) },
+      { telemetry }
+    );
+    const client = new Client({ name: "telemetry-test", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      expect((await client.callTool({ name: "get_profile", arguments: {} })).isError).toBe(true);
+      await telemetry.flush();
+      const options = fetchMock.mock.calls[0]![1] as RequestInit;
+      expect(JSON.parse(options.body as string)).toMatchObject({
+        kind: "tool",
+        name: "get_profile",
+        outcome: "error",
+        error_category: errorCategory,
+      });
     } finally {
       await client.close();
       await server.close();

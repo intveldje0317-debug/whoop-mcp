@@ -103,14 +103,27 @@ describe("dashboard reads", () => {
     await database
       .prepare(readFileSync(new URL("../migrations/0001-aggregates.sql", import.meta.url), "utf8"))
       .run();
+    for (const migrationName of ["0002-prompts.sql", "0003-error-categories.sql"]) {
+      const migration = readFileSync(
+        new URL(`../migrations/${migrationName}`, import.meta.url),
+        "utf8"
+      );
+      await database.batch(
+        migration
+          .split(";")
+          .map((statement) => statement.trim())
+          .filter(Boolean)
+          .map((statement) => database.prepare(statement))
+      );
+    }
     const day = new Date().toISOString().slice(0, 10);
     await database
-      .prepare("INSERT INTO daily_counts VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(day, "0.8.0", "tool", "get_today", "success", 3)
+      .prepare("INSERT INTO daily_counts VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(day, "0.8.0", "tool", "get_today", "error", "network", 3)
       .run();
     await database
-      .prepare("INSERT INTO daily_counts VALUES (?, ?, ?, ?, ?, ?)")
-      .bind("2020-01-01", "0.7.0", "command", "serve", "success", 5)
+      .prepare("INSERT INTO daily_counts VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind("2020-01-01", "0.7.0", "command", "serve", "success", "none", 5)
       .run();
     const response = await dashboardResponse(
       new Request("https://dashboard.example/api/metrics?days=7&kind=tool"),
@@ -127,7 +140,8 @@ describe("dashboard reads", () => {
         package_version: "0.8.0",
         kind: "tool",
         name: "get_today",
-        outcome: "success",
+        outcome: "error",
+        error_category: "network",
         count: 3,
       },
     ]);

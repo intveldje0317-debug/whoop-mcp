@@ -38,8 +38,9 @@ browser CORS permission, cookie, or client API key is provided.
 - Validate the exact version-1 client payload with strict Zod allowlists.
   Version strings are bounded to 64 characters. Kinds are command, tool and prompt;
   prompt names are restricted to the five registered MCP templates.
-- Use server-derived UTC day, package version, kind, name and outcome as the
-  composite aggregate key. Increment count with one parameterized atomic upsert.
+- Use server-derived UTC day, package version, kind, name, outcome and allowlisted
+  error category as the composite aggregate key. Increment count with one
+  parameterized atomic upsert.
 - Return empty, non-cacheable responses: 204 accepted; 400 invalid payload or
   length; 404 unknown path/query; 405 unsupported method; 408 body timeout;
   413 oversized body; 415 unsupported media/encoding; 429 throttled;
@@ -57,8 +58,11 @@ authenticated users or billing data. An embedded client key would not solve this
 
 ## Storage and Privacy
 
-`daily_counts` has exactly six columns: `day`, `package_version`, `kind`, `name`,
-`outcome`, `count`. It has no raw-event rows, exact timestamps, IDs, request
+After migration `0003-error-categories.sql`, `daily_counts` has exactly seven
+columns: `day`, `package_version`, `kind`, `name`, `outcome`, `error_category`,
+`count`. Historical tool errors become `unknown`; successes and non-tool events
+use `none`. Categories are a fixed enum and contain no status body or message.
+The table has no raw-event rows, exact timestamps, IDs, request
 bodies, health data, IPs, user agents, URLs, or error text. The approved design
 supersedes the earlier 30-day raw-event retention proposal. Only daily aggregates
 are retained; no automatic aggregate expiration is configured. Reads are private
@@ -149,6 +153,8 @@ used for authorization, never inserted into usage aggregates.
 
 - Date windows: 7, 30 or 90 UTC days, including today.
 - Filters: command/tool/prompt kind, package version and event-name search.
+- Error breakdown: coarse allowlisted tool error categories; historical errors
+  recorded before category support appear as `unknown`.
 - JSON queries use bound parameters and cap output at 5,000 rows. Truncated data
   is explicitly flagged; shorten the range to obtain complete counts.
 - No unique-user or installation estimate. Prompt events count template retrievals,
@@ -160,11 +166,11 @@ used for authorization, never inserted into usage aggregates.
 Local template: `wrangler.dashboard.json`. Ignored production configuration:
 `wrangler.dashboard.production.json`. Use these environment values:
 
-| Variable | Purpose |
-| --- | --- |
-| `ACCESS_TEAM_DOMAIN` | Exact HTTPS Cloudflare Access team origin |
-| `ACCESS_AUD` | Application Audience tag, not the application UUID |
-| `OWNER_EMAIL` | Only the verified owner email may read aggregates |
+| Variable             | Purpose                                            |
+| -------------------- | -------------------------------------------------- |
+| `ACCESS_TEAM_DOMAIN` | Exact HTTPS Cloudflare Access team origin          |
+| `ACCESS_AUD`         | Application Audience tag, not the application UUID |
+| `OWNER_EMAIL`        | Only the verified owner email may read aggregates  |
 
 The owner configured Access application `21a5c0a8-c37f-4e07-bb02-b7b96de45419`
 for the exact dashboard hostname, all paths, and confirmed an email-only Allow
@@ -182,7 +188,12 @@ were compared before/after and preserved. Collector version
 `48d23302-4ee2-4cf0-89c2-d3e2505326dc` accepts the prompt allowlist when enabled,
 but remains at `COLLECTION_ENABLED=0` with verified HTTP 503.
 
-Verification: 844 application tests and 77 collector/dashboard tests pass, including
+Migration `0003-error-categories.sql` and its collector/dashboard code are
+prepared locally but are not applied or deployed by this change. Local migration
+tests preserve prior counts and map historical tool errors to `unknown`.
+
+Verification for the error-category change includes 34 focused application tests
+and 83 collector/dashboard tests, including
 denial for expired, forged, wrong-owner, wrong-issuer and wrong-audience JWTs.
 Desktop/mobile preview checks at 1440/390/320 pixels cover filters, empty/error
 states, canvas rendering and overflow. The preview uses synthetic data only.

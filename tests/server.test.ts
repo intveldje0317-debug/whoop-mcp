@@ -281,6 +281,14 @@ describe("createWhoopServer", () => {
         expect(tool.annotations?.readOnlyHint).toBe(true);
       }
     });
+
+    it("every tool has a non-empty title annotation", async () => {
+      const result = await client.listTools();
+
+      for (const tool of result.tools) {
+        expect(tool.annotations?.title?.trim()).toBeTruthy();
+      }
+    });
   });
 
   // -------------------------------------------------------------------------

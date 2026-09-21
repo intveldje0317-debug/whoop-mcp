@@ -23,6 +23,10 @@ Unique people cannot be counted from these aggregates and will not be estimated.
    as users. Explicitly identify retained smoke-test data and incomplete sampling.
 5. Test authorization denial, date validation, aggregate SQL, prompt contracts and
    desktop/mobile browser rendering. Configure Access before enabling deployment.
+6. Tool errors may include one coarse allowlisted category. Store it only as a
+   daily aggregate dimension; never collect raw messages, response bodies or
+   health values. Preserve legacy events and migrate historical tool errors to
+   `unknown`.
 
 ## Structure and Verification
 

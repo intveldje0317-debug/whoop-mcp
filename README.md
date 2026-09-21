@@ -70,6 +70,8 @@ For Claude Code, Codex or Copilot, use `--client=claude-code`, `--client=codex` 
 Health results reach the assistant provider you configure. Aggregate mode limits
 disclosure to five summary tools; it is not anonymization. Usage telemetry is
 off by default and requires consent; it never includes health data or chat text.
+Opted-in tool failures use fixed coarse categories without raw error messages,
+response bodies or identifiers.
 See [data handling](references/privacy.md) and [telemetry controls](references/telemetry.md).
 
 <a id="configuration"></a>

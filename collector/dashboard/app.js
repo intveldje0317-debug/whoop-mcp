@@ -103,6 +103,13 @@ function render() {
   element("end").textContent = data.end;
   bars("mix", summary(visible, "kind"));
   bars("versions", summary(visible, "package_version"));
+  bars(
+    "error-categories",
+    summary(
+      visible.filter((row) => row.outcome === "error"),
+      "error_category"
+    )
+  );
   const names = summary(visible, "name").filter((row) =>
     row.name.toLowerCase().includes(element("search").value.toLowerCase())
   );
@@ -171,6 +178,7 @@ async function load() {
     element("rows").replaceChildren();
     bars("mix", []);
     bars("versions", []);
+    bars("error-categories", []);
     chart();
     element("status").className = "error";
     element("status").textContent = error.message || "Metrics unavailable.";

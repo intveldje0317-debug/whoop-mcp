@@ -5,7 +5,7 @@
  * connection limiting, CORS, graceful shutdown.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import http from "node:http";
 import {
   safeTokenCompare,
@@ -207,6 +207,48 @@ describe("HTTP Server", () => {
       });
       // Should not be 401 (may be 400 if no session established)
       expect(res.status).not.toBe(401);
+    });
+
+    it("accepts a bearer token validated by the OAuth provider", async () => {
+      const verifyBearerToken = vi.fn(async (token: string) => ({
+        token,
+        clientId: "claude",
+        scopes: ["mcp"],
+        extra: { grantId: "grant-1" },
+      }));
+      await cleanup?.();
+      const result = await createHttpServer({ ...defaultOptions, verifyBearerToken });
+      server = result.server;
+      cleanup = result.close;
+
+      const res = await request(server, "/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer oauth-jwt",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1 }),
+      });
+
+      expect(res.status).not.toBe(401);
+      expect(verifyBearerToken).toHaveBeenCalledWith("oauth-jwt");
+    });
+
+    it("rejects a bearer token when OAuth verification fails", async () => {
+      await cleanup?.();
+      const result = await createHttpServer({
+        ...defaultOptions,
+        verifyBearerToken: () => Promise.reject(new Error("expired")),
+      });
+      server = result.server;
+      cleanup = result.close;
+
+      const res = await request(server, "/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer expired-oauth-jwt" },
+      });
+
+      expect(res.status).toBe(401);
     });
   });
 
