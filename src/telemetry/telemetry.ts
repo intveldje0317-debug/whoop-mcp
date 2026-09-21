@@ -2,7 +2,35 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 const outcomeSchema = z.enum(["success", "error"]);
-const eventSchema = z.discriminatedUnion("kind", [
+const errorCategorySchema = z.enum([
+  "api_auth",
+  "api_rate_limit",
+  "api_client",
+  "api_server",
+  "network",
+  "invalid_data",
+  "output_contract",
+  "unexpected",
+]);
+const toolNameSchema = z.enum([
+  "get_profile",
+  "get_body_measurement",
+  "get_recovery_collection",
+  "get_sleep_collection",
+  "get_workout_collection",
+  "get_cycle_collection",
+  "get_sleep_by_id",
+  "get_workout_by_id",
+  "get_cycle_by_id",
+  "get_weekly_summary",
+  "compare_periods",
+  "get_trend",
+  "get_today",
+  "get_calendar",
+  "get_baselines",
+  "get_sleep_debt",
+]);
+const eventSchema = z.union([
   z.strictObject({
     kind: z.literal("prompt"),
     name: z.enum([
@@ -21,25 +49,14 @@ const eventSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("tool"),
-    name: z.enum([
-      "get_profile",
-      "get_body_measurement",
-      "get_recovery_collection",
-      "get_sleep_collection",
-      "get_workout_collection",
-      "get_cycle_collection",
-      "get_sleep_by_id",
-      "get_workout_by_id",
-      "get_cycle_by_id",
-      "get_weekly_summary",
-      "compare_periods",
-      "get_trend",
-      "get_today",
-      "get_calendar",
-      "get_baselines",
-      "get_sleep_debt",
-    ]),
-    outcome: outcomeSchema,
+    name: toolNameSchema,
+    outcome: z.literal("success"),
+  }),
+  z.strictObject({
+    kind: z.literal("tool"),
+    name: toolNameSchema,
+    outcome: z.literal("error"),
+    error_category: errorCategorySchema.optional(),
   }),
 ]);
 

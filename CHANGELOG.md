@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-21
+
+### Added
+- Added privacy-safe tool error categories to opted-in telemetry and the private
+  maintainer dashboard. Categories are fixed and coarse; raw errors, response
+  bodies, health values and identifiers remain excluded.
+- Added a row-preserving collector migration that classifies historical tool
+  errors as `unknown` while keeping existing aggregate counts intact.
+
+### Fixed
+- Remote MCP requests now accept verified OAuth connector bearer tokens and
+  attach their authenticated client context to MCP handlers. Invalid or expired
+  tokens continue to return an unauthorized response.
+
+### Verification
+- 882 client tests across 47 files and 83 collector/dashboard tests pass.
+- Client and collector lint, typecheck, formatting and build checks pass.
+- Dashboard rendering was verified at desktop and mobile widths without page
+  overflow, console errors or failed requests.
+
 ## [0.8.1] - 2026-09-19
 
 ### Changed

@@ -52,8 +52,9 @@ Disable telemetry by removing `WHOOP_MCP_TELEMETRY`, setting it to `0`, or setti
 Restart the process after changing settings. There are no persistent
 `telemetry enable`/`disable` commands.
 
-Each JSON POST contains exactly these fields. `1.2.3` below is illustrative;
-the actual `package_version` is the installed package's numeric version, not `latest`:
+Each JSON POST contains these fields. Tool errors also include one allowlisted
+`error_category`. `1.2.3` below is illustrative; the actual `package_version` is
+the installed package's numeric version, not `latest`:
 
 ```json
 {
@@ -68,9 +69,12 @@ the actual `package_version` is the installed package's numeric version, not `la
 `kind` is `command`, `tool`, or `prompt`. Command names are `serve` (startup only) and
 `setup` (successful completion after consent); tool names are the 16 registered tools. Outcomes are
 `success` or `error`, including output-validation failures. Unknown tools and
-SDK-rejected inputs are not recorded. No arguments, results, health data,
-credentials, user/device/session IDs, filesystem paths, raw errors, or timestamps
-are included. Prompt events count successful retrievals of the five named MCP
+SDK-rejected inputs are not recorded. Tool error categories are `api_auth`,
+`api_rate_limit`, `api_client`, `api_server`, `network`, `invalid_data`,
+`output_contract`, or `unexpected`. They contain no status body or message. No
+arguments, results, health data, credentials, user/device/session IDs, filesystem
+paths, raw errors, or timestamps are included. Prompt events count successful
+retrievals of the five named MCP
 templates: `weekly_health_review`, `sleep_analysis`, `recovery_trend`,
 `workout_recap`, and `health_check`. They never include prompt arguments, template
 content or chat text. Listing templates and SDK-rejected requests are not counted;
@@ -86,8 +90,9 @@ and do not change tool results or command exit codes.
 
 **Collector and retention:** the maintainer collector is enabled for consenting
 clients. The [Cloudflare implementation](../collector/README.md) stores
-daily counts by UTC day, package version, kind, name and outcome, never raw event
-rows or user identifiers. Aggregates currently have no automatic expiry; D1 Free
+daily counts by UTC day, package version, kind, name, outcome and error category,
+never raw event rows or user identifiers. Older tool errors are categorized as
+`unknown`. Aggregates currently have no automatic expiry; D1 Free
 Time Travel retains recoverable database history for seven days. Application
 logging, invocation logging and tracing are disabled. The provider's network/security
 infrastructure can still observe source IPs and arrival times; a fixed retention
@@ -108,7 +113,8 @@ See the [telemetry spec](../docs/specs/v080-command-telemetry.md) and
 [Open the private dashboard](https://whoop-mcp-dashboard.whoop-ai-mcp.workers.dev).
 Cloudflare Access and Worker-side JWT verification restrict it to the configured
 owner email. It reads daily aggregate counts only, with 7/30/90-day filters,
-command/tool/prompt rankings, success/error outcomes and package-version filters.
+command/tool/prompt rankings, success/error outcomes, error-category breakdowns
+and package-version filters.
 No unique users or installations are measured. Owner sign-in is used only for
 dashboard authorization, not usage analytics.
 

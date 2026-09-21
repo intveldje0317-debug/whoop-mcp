@@ -46,9 +46,31 @@ describe("collector ingestion", () => {
           kind: "tool",
           name: "get_today",
           outcome: "success",
+          error_category: "none",
         },
       ],
     ]);
+  });
+
+  it("stores an allowlisted tool error category", async () => {
+    const deps = dependencies();
+    const response = await handleEvent(
+      request({ ...event, outcome: "error", error_category: "api_rate_limit" }),
+      deps
+    );
+
+    expect(response.status).toBe(204);
+    expect(deps.increment).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "error", error_category: "api_rate_limit" })
+    );
+  });
+
+  it("normalizes legacy tool errors to unknown", async () => {
+    const deps = dependencies();
+    expect((await handleEvent(request({ ...event, outcome: "error" }), deps)).status).toBe(204);
+    expect(deps.increment).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "error", error_category: "unknown" })
+    );
   });
 
   it.each([
@@ -60,6 +82,9 @@ describe("collector ingestion", () => {
     { ...event, kind: "command", name: "get_today" },
     { ...event, package_version: "not-a-version" },
     { ...event, outcome: "sensitive-error-text" },
+    { ...event, outcome: "error", error_category: "sensitive-error-text" },
+    { ...event, error_category: "unexpected" },
+    { ...event, kind: "command", name: "serve", outcome: "error", error_category: "unexpected" },
     null,
     [event],
   ])("rejects unsupported payloads without storage", async (body) => {

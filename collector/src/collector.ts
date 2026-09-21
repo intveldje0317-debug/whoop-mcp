@@ -8,8 +8,36 @@ const fields = {
     .regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
   outcome: z.enum(["success", "error"]),
 };
+const errorCategorySchema = z.enum([
+  "api_auth",
+  "api_rate_limit",
+  "api_client",
+  "api_server",
+  "network",
+  "invalid_data",
+  "output_contract",
+  "unexpected",
+]);
+const toolNameSchema = z.enum([
+  "get_profile",
+  "get_body_measurement",
+  "get_recovery_collection",
+  "get_sleep_collection",
+  "get_workout_collection",
+  "get_cycle_collection",
+  "get_sleep_by_id",
+  "get_workout_by_id",
+  "get_cycle_by_id",
+  "get_weekly_summary",
+  "compare_periods",
+  "get_trend",
+  "get_today",
+  "get_calendar",
+  "get_baselines",
+  "get_sleep_debt",
+]);
 
-const eventSchema = z.discriminatedUnion("kind", [
+const eventSchema = z.union([
   z.strictObject({
     ...fields,
     kind: z.literal("prompt"),
@@ -29,24 +57,16 @@ const eventSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...fields,
     kind: z.literal("tool"),
-    name: z.enum([
-      "get_profile",
-      "get_body_measurement",
-      "get_recovery_collection",
-      "get_sleep_collection",
-      "get_workout_collection",
-      "get_cycle_collection",
-      "get_sleep_by_id",
-      "get_workout_by_id",
-      "get_cycle_by_id",
-      "get_weekly_summary",
-      "compare_periods",
-      "get_trend",
-      "get_today",
-      "get_calendar",
-      "get_baselines",
-      "get_sleep_debt",
-    ]),
+    name: toolNameSchema,
+    outcome: z.literal("success"),
+  }),
+  z.strictObject({
+    schema_version: fields.schema_version,
+    package_version: fields.package_version,
+    kind: z.literal("tool"),
+    name: toolNameSchema,
+    outcome: z.literal("error"),
+    error_category: errorCategorySchema.optional(),
   }),
 ]);
 
@@ -58,6 +78,7 @@ export interface Aggregate {
   kind: Event["kind"];
   name: Event["name"];
   outcome: Event["outcome"];
+  error_category: z.infer<typeof errorCategorySchema> | "none" | "unknown";
 }
 
 export interface CollectorDependencies {
@@ -150,6 +171,10 @@ export async function handleEvent(
       kind: event.kind,
       name: event.name,
       outcome: event.outcome,
+      error_category:
+        event.kind !== "tool" || event.outcome === "success"
+          ? "none"
+          : (event.error_category ?? "unknown"),
     });
     return respond(204);
   } catch {

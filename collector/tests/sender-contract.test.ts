@@ -58,7 +58,39 @@ describe("existing client wire contract", () => {
         kind,
         name,
         outcome,
+        error_category: kind === "tool" && outcome === "error" ? "unknown" : "none",
       });
     }
+  });
+
+  it("preserves an allowlisted tool error category end to end", async () => {
+    const increment = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: string, init: RequestInit) =>
+        handleEvent(new Request(input, init), {
+          enabled: true,
+          allowRequest: async () => true,
+          increment,
+          now: () => new Date("2026-09-19T00:00:00.000Z"),
+        })
+      )
+    );
+    const telemetry = createTelemetry({
+      WHOOP_MCP_TELEMETRY: "1",
+      WHOOP_MCP_TELEMETRY_ENDPOINT: "https://collector.example/events",
+    });
+
+    telemetry.record({
+      kind: "tool",
+      name: "get_workout_collection",
+      outcome: "error",
+      error_category: "api_auth",
+    });
+    await telemetry.flush();
+
+    expect(increment).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "error", error_category: "api_auth" })
+    );
   });
 });

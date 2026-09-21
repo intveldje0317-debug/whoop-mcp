@@ -188,6 +188,11 @@ export async function main(telemetry?: Telemetry): Promise<void> {
           res: import("node:http").ServerResponse
         ) => void)
       | undefined;
+    let verifyBearerToken:
+      | ((
+          token: string
+        ) => Promise<import("@modelcontextprotocol/sdk/server/auth/types.js").AuthInfo>)
+      | undefined;
     const connectorPassword = process.env.MCP_CONNECTOR_PASSWORD;
     const publicUrl = process.env.PUBLIC_URL;
     const allowedRedirectUris = process.env.ALLOWED_REDIRECT_URIS;
@@ -217,6 +222,7 @@ export async function main(telemetry?: Telemetry): Promise<void> {
         req: import("node:http").IncomingMessage,
         res: import("node:http").ServerResponse
       ) => void;
+      verifyBearerToken = (token: string) => oauthApp.provider.verifyAccessToken(token);
       oauthCloseFn = oauthApp.close;
       logger.info("oauth connector mounted", { publicUrl });
     }
@@ -229,6 +235,7 @@ export async function main(telemetry?: Telemetry): Promise<void> {
       trustProxy,
       healthCheck,
       oauthHandler,
+      verifyBearerToken,
     });
     await server.connect(httpResult.transport);
     httpResults.push(httpResult);

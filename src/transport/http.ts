@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { createHash, timingSafeEqual } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +60,8 @@ export interface HttpServerOptions {
    * plug in OAuth JWT expiry checks.
    */
   validateBearerToken?: (token: string) => boolean;
+  /** Verify OAuth bearer tokens and provide identity context to MCP handlers. */
+  verifyBearerToken?: (token: string) => Promise<AuthInfo>;
 }
 
 export interface HttpServerResult {
@@ -196,6 +199,7 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
     mcpRateLimit = { windowMs: 60_000, max: 100 },
     sseReauthIntervalMs = 5 * 60 * 1000,
     validateBearerToken,
+    verifyBearerToken,
   } = options;
 
   if (!authToken) {
@@ -208,6 +212,18 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
   // Track active connections for limiting
   let activeConnections = 0;
   const startTime = Date.now();
+
+  async function authenticateToken(token: string): Promise<AuthInfo | null> {
+    if (safeTokenCompare(token, authToken)) {
+      return { token, clientId: "static", scopes: ["mcp"] };
+    }
+    if (!verifyBearerToken) return null;
+    try {
+      return await verifyBearerToken(token);
+    } catch {
+      return null;
+    }
+  }
 
   // Per-IP fixed-window rate limiter for /mcp (no extra deps).
   const mcpRateBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -240,13 +256,16 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
   let sseTimer: NodeJS.Timeout | null = null;
   if (sseReauthIntervalMs > 0) {
     sseTimer = setInterval(() => {
-      const validate =
-        validateBearerToken ?? ((t: string): boolean => safeTokenCompare(t, authToken));
       for (const c of sseConnections) {
-        if (!validate(c.token)) {
-          c.res.end();
-          sseConnections.delete(c);
-        }
+        void (async () => {
+          const valid = validateBearerToken
+            ? validateBearerToken(c.token)
+            : (await authenticateToken(c.token)) !== null;
+          if (!valid) {
+            c.res.end();
+            sseConnections.delete(c);
+          }
+        })();
       }
     }, sseReauthIntervalMs);
     sseTimer.unref();
@@ -305,10 +324,16 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
     if (pathname === "/mcp") {
       // Auth check
       const token = extractBearerToken(req);
-      if (!token || !safeTokenCompare(token, authToken)) {
+      if (!token) {
         sendJson(res, 401, { error: "Unauthorized" });
         return;
       }
+      const authInfo = await authenticateToken(token);
+      if (!authInfo) {
+        sendJson(res, 401, { error: "Unauthorized" });
+        return;
+      }
+      (req as IncomingMessage & { auth?: AuthInfo }).auth = authInfo;
 
       // Per-IP rate limit (100/min default)
       if (!checkMcpRateLimit(clientIp(req))) {

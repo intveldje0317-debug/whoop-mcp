@@ -49,6 +49,19 @@ describe("built Worker", () => {
     await database
       .prepare(readFileSync(new URL("../migrations/0001-aggregates.sql", import.meta.url), "utf8"))
       .run();
+    for (const migrationName of ["0002-prompts.sql", "0003-error-categories.sql"]) {
+      const migration = readFileSync(
+        new URL(`../migrations/${migrationName}`, import.meta.url),
+        "utf8"
+      );
+      await database.batch(
+        migration
+          .split(";")
+          .map((statement) => statement.trim())
+          .filter(Boolean)
+          .map((statement) => database.prepare(statement))
+      );
+    }
     return database;
   }
 

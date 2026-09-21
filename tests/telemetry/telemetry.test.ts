@@ -71,6 +71,28 @@ describe("opt-in telemetry", () => {
     expect(cancel).toHaveBeenCalled();
   });
 
+  it("sends an allowlisted category for tool errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ body: null });
+    vi.stubGlobal("fetch", fetchMock);
+    const telemetry = createTelemetry(enabledEnv);
+
+    telemetry.record({
+      kind: "tool",
+      name: "get_workout_collection",
+      outcome: "error",
+      error_category: "output_contract",
+    });
+    await telemetry.flush();
+
+    const [, options] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(JSON.parse(options.body as string)).toMatchObject({
+      kind: "tool",
+      name: "get_workout_collection",
+      outcome: "error",
+      error_category: "output_contract",
+    });
+  });
+
   it("rejects unexpected fields, arbitrary names, and diagnostic events", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -82,6 +104,9 @@ describe("opt-in telemetry", () => {
       { ...command, name: "private-command" },
       { kind: "tool", name: "private-tool", outcome: "success" },
       { ...command, outcome: "private-error" },
+      { kind: "tool", name: "get_today", outcome: "error", error_category: "raw message" },
+      { kind: "tool", name: "get_today", outcome: "success", error_category: "unexpected" },
+      { ...command, error_category: "unexpected" },
     ])
       telemetry.record(event);
     await telemetry.flush();
