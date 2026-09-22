@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-09-23
+
+### Fixed
+- Tool output schemas now advertise JSON Schema 2020-12, restoring Claude
+  Desktop compatibility after its stricter schema-dialect validation.
+- Standard and aggregate privacy modes retain their existing output contracts
+  and runtime validation.
+
+### Verification
+- 890 tests across 48 files pass.
+- Lint, formatting, typecheck, build, and package dry-run checks pass.
+- The package dry-run reports `whoop-ai-mcp@0.8.4` with 191 expected files;
+  `npm audit` reports zero vulnerabilities.
+
 ## [0.8.3] - 2026-09-23
 
 ### Fixed
