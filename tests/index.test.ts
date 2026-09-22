@@ -92,11 +92,15 @@ function setupHappyPath(): void {
   const mockServer = { connect: mockConnect };
   mockCreateWhoopServer.mockReturnValue({ server: mockServer });
   mockConnect.mockResolvedValue(undefined);
-  MockStdioServerTransport.mockImplementation(
-    class {
-      _mock = true;
-    }
-  );
+  MockStdioServerTransport.mockImplementation(function () {
+    return mockStdioTransportInstance;
+  });
+}
+
+function getDeferredClient(): { get: (path: string) => Promise<unknown> } {
+  return mockCreateWhoopServer.mock.calls[0][0] as {
+    get: (path: string) => Promise<unknown>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +181,7 @@ describe("main() entry point", () => {
       setupHappyPath();
       mockAuthenticate.mockRejectedValue(new Error("authentication secret"));
       mockRunSetup.mockRejectedValue(new Error("setup secret"));
+      if (name === "serve") mockConnect.mockRejectedValue(new Error("serve secret"));
       const fetchMock = enableTelemetry().mockRejectedValue(new Error("collector secret"));
       const { runCli } = await import("../src/index.js");
       expect(await runCli(name === "serve" ? [] : ["setup"])).toBe(1);
@@ -291,6 +296,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       expect(mockAuthenticate).toHaveBeenCalledOnce();
       expect(mockAuthenticate).toHaveBeenCalledWith(
@@ -306,7 +312,8 @@ describe("main() entry point", () => {
       mockAuthenticate.mockRejectedValue(new Error("OAuth flow failed"));
 
       const { main } = await importMain();
-      await expect(main()).rejects.toThrow("OAuth flow failed");
+      await main();
+      await expect(getDeferredClient().get("/test")).rejects.toThrow("OAuth flow failed");
     });
   });
 
@@ -321,6 +328,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       expect(mockCreateWhoopClient).toHaveBeenCalledOnce();
       expect(mockCreateWhoopClient).toHaveBeenCalledWith(
@@ -335,6 +343,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       const clientOptions = mockCreateWhoopClient.mock.calls[0][0] as {
         onTokenRefresh?: () => Promise<string>;
@@ -379,6 +388,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       // Extract the onTokenRefresh callback
       const clientOptions = mockCreateWhoopClient.mock.calls[0][0] as {
@@ -405,6 +415,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       const clientOptions = mockCreateWhoopClient.mock.calls[0][0] as {
         onTokenRefresh: () => Promise<string>;
@@ -441,6 +452,7 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       await main();
+      await getDeferredClient().get("/test");
 
       // The shared cache is constructed inside main() and passed to the client.
       const clientOptions = mockCreateWhoopClient.mock.calls[0][0] as {
@@ -460,19 +472,71 @@ describe("main() entry point", () => {
   // -------------------------------------------------------------------------
 
   describe("MCP server and stdio transport", () => {
-    it("creates the MCP server with the WHOOP client", async () => {
+    it("connects stdio without waiting for interactive authentication", async () => {
       setupHappyPath();
-      const mockClient = { get: vi.fn() };
-      mockCreateWhoopClient.mockReturnValue(mockClient);
+      let resolveAuthentication: ((token: string) => void) | undefined;
+      mockAuthenticate.mockImplementation(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveAuthentication = resolve;
+          })
+      );
+
+      const { main } = await importMain();
+      const mainPromise = main();
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(mockConnect).toHaveBeenCalledOnce();
+      } finally {
+        resolveAuthentication?.("test-access-token");
+        await mainPromise;
+      }
+    });
+
+    it("shares one in-flight authentication across concurrent WHOOP operations", async () => {
+      setupHappyPath();
+      let resolveAuthentication: ((token: string) => void) | undefined;
+      mockAuthenticate.mockImplementation(
+        () =>
+          new Promise<string>((resolve) => {
+            resolveAuthentication = resolve;
+          })
+      );
+      const get = vi.fn().mockResolvedValue({ ok: true });
+      mockCreateWhoopClient.mockReturnValue({ get });
+
+      const { main } = await importMain();
+      await main();
+      const deferredClient = mockCreateWhoopServer.mock.calls[0][0] as {
+        get: (path: string) => Promise<unknown>;
+      };
+
+      const firstRequest = deferredClient.get("/first");
+      const secondRequest = deferredClient.get("/second");
+      expect(mockAuthenticate).toHaveBeenCalledOnce();
+
+      resolveAuthentication?.("test-access-token");
+      await Promise.all([firstRequest, secondRequest]);
+
+      expect(mockCreateWhoopClient).toHaveBeenCalledOnce();
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it("creates the MCP server with a deferred WHOOP client", async () => {
+      setupHappyPath();
 
       const { main } = await importMain();
       await main();
 
       expect(mockCreateWhoopServer).toHaveBeenCalledOnce();
-      expect(mockCreateWhoopServer).toHaveBeenCalledWith(mockClient, {
-        disableResources: false,
-        privacyMode: "standard",
-      });
+      expect(mockCreateWhoopServer).toHaveBeenCalledWith(
+        expect.objectContaining({ get: expect.any(Function) }),
+        {
+          disableResources: false,
+          privacyMode: "standard",
+        }
+      );
+      expect(mockCreateWhoopClient).not.toHaveBeenCalled();
     });
 
     it("creates a StdioServerTransport", async () => {

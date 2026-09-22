@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-09-23
+
+### Fixed
+- Refresh grants now include WHOOP's required offline scope, restoring silent
+  refresh of expired access tokens.
+- MCP initialization and tool discovery no longer wait for interactive WHOOP
+  authentication. The WHOOP client authenticates lazily and shares one
+  in-flight authentication.
+- Interactive OAuth is serialized across processes with safe stale-lock
+  recovery, preventing repeated browser windows, fixed-port callback races,
+  and misleading state-mismatch errors.
+- CSRF state and PKCE validation remain intact.
+
+### Verification
+- 890 tests across 48 files pass.
+- Lint, formatting, typecheck, build, and package dry-run checks pass.
+- The package dry-run reports `whoop-ai-mcp@0.8.3` with 191 expected files;
+  `npm audit` reports zero vulnerabilities.
+
 ## [0.8.2] - 2026-09-21
 
 ### Added
