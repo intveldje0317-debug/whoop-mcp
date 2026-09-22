@@ -168,6 +168,11 @@ describe("release MCP contracts", () => {
       const { tools } = await client.listTools();
       expect(tools).toHaveLength(16);
       expect(tools.every((tool) => tool.outputSchema?.type === "object")).toBe(true);
+      expect(
+        tools.every(
+          (tool) => tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+        )
+      ).toBe(true);
       for (const name of ["get_baselines", "get_sleep_debt", "get_today"]) {
         const result = await client.callTool({ name, arguments: {} });
         expect(result.isError).not.toBe(true);
@@ -186,6 +191,12 @@ describe("release MCP contracts", () => {
         "get_trend",
         "get_weekly_summary",
       ]);
+      expect(tools.every((tool) => tool.outputSchema?.type === "object")).toBe(true);
+      expect(
+        tools.every(
+          (tool) => tool.outputSchema?.$schema === "https://json-schema.org/draft/2020-12/schema"
+        )
+      ).toBe(true);
       for (const name of ["get_baselines", "get_sleep_debt"]) {
         const result = await client.callTool({ name, arguments: {} });
         expect(result.isError).not.toBe(true);

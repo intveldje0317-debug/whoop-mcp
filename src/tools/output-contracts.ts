@@ -10,6 +10,20 @@ import { baselinesOutputSchema } from "./get-baselines.js";
 import { sleepDebtOutputSchema } from "./get-sleep-debt.js";
 
 export { privacyModeSchema, type PrivacyMode } from "../privacy.js";
+const JSON_SCHEMA_2020_12_URI = "https://json-schema.org/draft/2020-12/schema";
+
+// Override SDK 1.x tool serialization, which otherwise advertises draft-07.
+function withOutputSchemaDialect(
+  schemas: Record<string, z.ZodObject>
+): Record<string, z.ZodObject> {
+  return Object.fromEntries(
+    Object.entries(schemas).map(([name, schema]) => [
+      name,
+      schema.meta({ $schema: JSON_SCHEMA_2020_12_URI }),
+    ])
+  );
+}
+
 const number = z.number().finite();
 const nullable = number.nullable();
 const period = periodSchema.extend({ days: number });
@@ -126,7 +140,7 @@ const calendar = z.object({
   averages: z.object({ recovery: nullable, sleep_hours: nullable, strain: nullable }),
 });
 
-export const outputSchemas: Record<string, z.ZodObject> = {
+export const outputSchemas: Record<string, z.ZodObject> = withOutputSchemaDialect({
   get_profile: z
     .object({ user_id: number, email: z.string(), first_name: z.string(), last_name: z.string() })
     .passthrough(),
@@ -147,7 +161,7 @@ export const outputSchemas: Record<string, z.ZodObject> = {
   get_calendar: calendar,
   get_baselines: baselinesOutputSchema,
   get_sleep_debt: sleepDebtOutputSchema,
-};
+});
 
 const aggregateBand = z.object({
   sample_size: number,
@@ -175,7 +189,7 @@ const aggregateQuality = dataQualitySchema
       })
     ),
   });
-export const aggregateOutputSchemas: Record<string, z.ZodObject> = {
+export const aggregateOutputSchemas: Record<string, z.ZodObject> = withOutputSchemaDialect({
   get_weekly_summary: weekly
     .omit({ warnings: true })
     .extend({ workouts: weekly.shape.workouts.omit({ sport_breakdown: true }) }),
@@ -191,7 +205,7 @@ export const aggregateOutputSchemas: Record<string, z.ZodObject> = {
   get_sleep_debt: sleepDebtOutputSchema
     .omit({ nights: true, standing_debt_hours: true, standing_debt_date: true, summary: true })
     .extend({ data_quality: aggregateQuality }),
-};
+});
 
 export function projectAggregateDates(data: Record<string, unknown>): Record<string, unknown> {
   const projected = { ...data };
