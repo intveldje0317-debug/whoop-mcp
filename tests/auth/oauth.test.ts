@@ -24,6 +24,15 @@ import {
 } from "../../src/api/endpoints.js";
 import { WhoopNetworkError } from "../../src/api/client.js";
 
+const { mockAcquireOAuthFlowLock, mockReleaseOAuthFlowLock } = vi.hoisted(() => ({
+  mockAcquireOAuthFlowLock: vi.fn(),
+  mockReleaseOAuthFlowLock: vi.fn(),
+}));
+
+vi.mock("../../src/auth/oauth-lock.js", () => ({
+  acquireOAuthFlowLock: (...args: unknown[]) => mockAcquireOAuthFlowLock(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Shared test fixtures
 // ---------------------------------------------------------------------------
@@ -285,6 +294,7 @@ describe("refreshAccessToken", () => {
     expect(body.get("refresh_token")).toBe("refresh-token-abc");
     expect(body.get("client_id")).toBe("test-client-id");
     expect(body.get("client_secret")).toBe("test-client-secret");
+    expect(body.get("scope")).toBe("offline");
   });
 
   it("uses application/x-www-form-urlencoded content type", async () => {
@@ -650,6 +660,10 @@ describe("authenticate", () => {
     mockSaveTokens.mockReset();
     mockIsTokenExpired.mockReset();
     mockStartCallbackServer.mockReset();
+    mockReleaseOAuthFlowLock.mockReset();
+    mockReleaseOAuthFlowLock.mockResolvedValue(undefined);
+    mockAcquireOAuthFlowLock.mockReset();
+    mockAcquireOAuthFlowLock.mockResolvedValue({ release: mockReleaseOAuthFlowLock });
   });
 
   afterEach(() => {
@@ -726,6 +740,30 @@ describe("authenticate", () => {
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const body = new URLSearchParams(options.body as string);
     expect(body.get("code_verifier")).toBeTruthy();
+    expect(mockReleaseOAuthFlowLock).toHaveBeenCalledOnce();
+  });
+
+  it("releases the OAuth flow lock when interactive authentication fails", async () => {
+    mockLoadTokens.mockResolvedValue(null);
+    mockStartCallbackServer.mockReturnValueOnce({
+      port: 3000,
+      result: Promise.reject(new Error("callback failed")),
+    });
+
+    await expect(authenticate(TEST_CONFIG)).rejects.toThrow("callback failed");
+
+    expect(mockReleaseOAuthFlowLock).toHaveBeenCalledOnce();
+  });
+
+  it("reuses fresh tokens written while waiting for the OAuth flow lock", async () => {
+    mockLoadTokens.mockResolvedValueOnce(null).mockResolvedValueOnce(VALID_TOKENS);
+    mockIsTokenExpired.mockReturnValueOnce(false);
+
+    const token = await authenticate(TEST_CONFIG);
+
+    expect(token).toBe("existing-access-token");
+    expect(mockStartCallbackServer).not.toHaveBeenCalled();
+    expect(mockReleaseOAuthFlowLock).toHaveBeenCalledOnce();
   });
 
   it.each([

@@ -15,6 +15,7 @@ import {
   WHOOP_REQUIRED_SCOPES,
 } from "../api/endpoints.js";
 import { WhoopNetworkError } from "../api/client.js";
+import { acquireOAuthFlowLock } from "./oauth-lock.js";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 
@@ -190,6 +191,7 @@ export async function refreshAccessToken(
     refresh_token: refreshToken,
     client_id: config.clientId,
     client_secret: config.clientSecret,
+    scope: "offline",
   });
 
   let response: Response;
@@ -335,7 +337,21 @@ export async function authenticate(config: OAuthConfig): Promise<string> {
   }
 
   // 3. Full OAuth flow
-  return performOAuthFlow(config);
+  return performOAuthFlowWithLock(config);
+}
+
+async function performOAuthFlowWithLock(config: OAuthConfig): Promise<string> {
+  const lock = await acquireOAuthFlowLock(config.tokenDir);
+  try {
+    const tokens = await loadTokens(config.tokenDir);
+    if (tokens && !isTokenExpired(tokens)) {
+      console.error("Using WHOOP tokens created by another process.");
+      return tokens.access_token;
+    }
+    return await performOAuthFlow(config);
+  } finally {
+    await lock.release();
+  }
 }
 
 /**

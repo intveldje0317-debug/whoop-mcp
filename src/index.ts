@@ -20,6 +20,7 @@ import { authenticate, refreshAccessToken, toOAuthTokens } from "./auth/oauth.js
 import type { OAuthConfig } from "./auth/oauth.js";
 import { loadTokens, saveTokens } from "./auth/token-store.js";
 import { createWhoopClient } from "./api/client.js";
+import type { WhoopClient, WhoopGetOptions } from "./api/client.js";
 import { MemoryCache } from "./cache/memory-cache.js";
 import { createWhoopServer } from "./server.js";
 import { connectStdioTransport } from "./transport/stdio.js";
@@ -115,13 +116,9 @@ export async function main(telemetry?: Telemetry): Promise<void> {
   const clientSecret = getRequiredEnv("WHOOP_CLIENT_SECRET");
   const oauthConfig: OAuthConfig = { clientId, clientSecret };
 
-  // 3. Authenticate with WHOOP — uses cached tokens, refreshes, or runs full flow
-  console.error("Authenticating with WHOOP...");
-  const accessToken = await authenticate(oauthConfig);
-  console.error("Authentication successful.");
-  logger.info("whoop authentication complete");
-
-  // 4. Create the WHOOP API client with automatic token refresh.
+  // 3. Create a deferred WHOOP API client with automatic token refresh.
+  // Authentication starts on the first WHOOP request so MCP initialization and
+  // tool discovery are never blocked by an interactive browser flow.
   // A single process-wide cache is shared by the client (opt-in per request)
   // and the MCP resources; it is cleared whenever tokens are refreshed.
   const cache = new MemoryCache();
@@ -144,9 +141,26 @@ export async function main(telemetry?: Telemetry): Promise<void> {
     return newTokens.access_token;
   };
 
-  const client = createWhoopClient({ accessToken, onTokenRefresh, logger, cache });
+  let authenticatedClientPromise: Promise<WhoopClient> | undefined;
+  const getAuthenticatedClient = (): Promise<WhoopClient> => {
+    authenticatedClientPromise ??= (async () => {
+      console.error("Authenticating with WHOOP...");
+      const accessToken = await authenticate(oauthConfig);
+      console.error("Authentication successful.");
+      logger.info("whoop authentication complete");
+      return createWhoopClient({ accessToken, onTokenRefresh, logger, cache });
+    })();
+    return authenticatedClientPromise;
+  };
 
-  // 5. Create the MCP server with all WHOOP tools and resources
+  const client: WhoopClient = {
+    async get<T>(path: string, options?: WhoopGetOptions): Promise<T> {
+      const authenticatedClient = await getAuthenticatedClient();
+      return authenticatedClient.get<T>(path, options);
+    },
+  };
+
+  // 4. Create the MCP server with all WHOOP tools and resources
   const disableResources = process.env.WHOOP_MCP_DISABLE_RESOURCES === "1";
   const { server } = createWhoopServer(client, {
     disableResources,
@@ -154,7 +168,7 @@ export async function main(telemetry?: Telemetry): Promise<void> {
     ...(telemetry?.status.enabled ? { telemetry } : {}),
   });
 
-  // 6. Connect transports based on MCP_TRANSPORT mode
+  // 5. Connect transports based on MCP_TRANSPORT mode
   const httpResults: HttpServerResult[] = [];
   let oauthCloseFn: (() => void) | null = null;
 
@@ -248,7 +262,7 @@ export async function main(telemetry?: Telemetry): Promise<void> {
     });
   }
 
-  // 7. Graceful shutdown — close HTTP servers on SIGTERM/SIGINT
+  // 6. Graceful shutdown — close HTTP servers on SIGTERM/SIGINT
   if (httpResults.length > 0) {
     const shutdown = async (): Promise<void> => {
       logger.info("shutting down");

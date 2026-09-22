@@ -68,7 +68,12 @@ export function isTokenExpired(tokens: OAuthTokens): boolean {
 
 /** Resolve the full path to the tokens file */
 function tokenFilePath(tokenDir?: string): string {
-  return join(tokenDir ?? DEFAULT_TOKEN_DIR, TOKEN_FILENAME);
+  return join(resolveTokenDirectory(tokenDir), TOKEN_FILENAME);
+}
+
+/** Resolve the configured or default directory shared by OAuth state files. */
+export function resolveTokenDirectory(tokenDir?: string): string {
+  return tokenDir ?? DEFAULT_TOKEN_DIR;
 }
 
 /**
@@ -78,7 +83,7 @@ function tokenFilePath(tokenDir?: string): string {
  * the token file with 0600 (user-only read/write) permissions.
  */
 export async function saveTokens(tokens: OAuthTokens, tokenDir?: string): Promise<void> {
-  const dir = tokenDir ?? DEFAULT_TOKEN_DIR;
+  const dir = resolveTokenDirectory(tokenDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await writeFile(tokenFilePath(tokenDir), JSON.stringify(tokens, null, 2), {
     encoding: "utf-8",
