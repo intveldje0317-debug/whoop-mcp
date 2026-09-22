@@ -92,7 +92,9 @@ function setupHappyPath(): void {
   const mockServer = { connect: mockConnect };
   mockCreateWhoopServer.mockReturnValue({ server: mockServer });
   mockConnect.mockResolvedValue(undefined);
-  MockStdioServerTransport.mockImplementation(() => mockStdioTransportInstance);
+  MockStdioServerTransport.mockImplementation(function () {
+    return mockStdioTransportInstance;
+  });
 }
 
 function getDeferredClient(): { get: (path: string) => Promise<unknown> } {
@@ -482,13 +484,13 @@ describe("main() entry point", () => {
 
       const { main } = await importMain();
       const mainPromise = main();
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      const connectedBeforeAuthentication = mockConnect.mock.calls.length;
-
-      resolveAuthentication?.("test-access-token");
-      await mainPromise;
-
-      expect(connectedBeforeAuthentication).toBe(1);
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(mockConnect).toHaveBeenCalledOnce();
+      } finally {
+        resolveAuthentication?.("test-access-token");
+        await mainPromise;
+      }
     });
 
     it("shares one in-flight authentication across concurrent WHOOP operations", async () => {
