@@ -250,6 +250,16 @@ export async function main(telemetry?: Telemetry): Promise<void> {
       healthCheck,
       oauthHandler,
       verifyBearerToken,
+      maxConnections: 25,
+      // One MCP server per session so multiple Claude chats can connect at once
+      connectSession: async (sessionTransport) => {
+        const { server: sessionServer } = createWhoopServer(client, {
+          disableResources,
+          privacyMode,
+          ...(telemetry?.status.enabled ? { telemetry } : {}),
+        });
+        await sessionServer.connect(sessionTransport);
+      },
     });
     await server.connect(httpResult.transport);
     httpResults.push(httpResult);
