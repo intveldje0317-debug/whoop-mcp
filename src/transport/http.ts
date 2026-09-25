@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { createHash, timingSafeEqual } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,15 @@ export interface HttpServerOptions {
   validateBearerToken?: (token: string) => boolean;
   /** Verify OAuth bearer tokens and provide identity context to MCP handlers. */
   verifyBearerToken?: (token: string) => Promise<AuthInfo>;
+  /**
+   * Multi-session mode. When provided, every MCP `initialize` request gets its
+   * own transport, and this callback connects a fresh MCP server to it. This
+   * lets several clients (e.g. multiple claude.ai chats) use the server at the
+   * same time. Without it, a single shared transport allows only one session.
+   */
+  connectSession?: (transport: StreamableHTTPServerTransport) => Promise<void>;
+  /** Maximum concurrent MCP sessions in multi-session mode (default: 50). */
+  maxSessions?: number;
 }
 
 export interface HttpServerResult {
@@ -276,6 +286,31 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
     sessionIdGenerator: () => randomUUID(),
   });
 
+  // Multi-session mode: one transport per MCP session, keyed by session ID
+  const { connectSession, maxSessions = 50 } = options;
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+
+  const openSession = async (): Promise<StreamableHTTPServerTransport> => {
+    // Keep memory bounded: close the oldest session when the cap is reached
+    while (sessions.size >= maxSessions) {
+      const oldest = sessions.entries().next().value;
+      if (!oldest) break;
+      sessions.delete(oldest[0]);
+      await oldest[1].close().catch(() => undefined);
+    }
+    const sessionTransport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id: string) => {
+        sessions.set(id, sessionTransport);
+      },
+    });
+    sessionTransport.onclose = () => {
+      if (sessionTransport.sessionId) sessions.delete(sessionTransport.sessionId);
+    };
+    await connectSession!(sessionTransport);
+    return sessionTransport;
+  };
+
   // Create HTTP server
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -375,9 +410,39 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
         }
       }
 
+      // Pick the transport for this request
+      let target = transport;
+      if (connectSession) {
+        const header = req.headers["mcp-session-id"];
+        const sessionId = typeof header === "string" ? header : undefined;
+        const existing = sessionId ? sessions.get(sessionId) : undefined;
+        if (existing) {
+          target = existing;
+        } else if (!sessionId && req.method === "POST" && isInitializeRequest(parsedBody)) {
+          try {
+            target = await openSession();
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Internal server error";
+            sendJson(res, 500, { error: "Internal Server Error", message });
+            return;
+          }
+        } else {
+          // Unknown/expired session (e.g. after a restart): 404 tells the client to re-initialize
+          sendJson(res, sessionId ? 404 : 400, {
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: sessionId ? "Session not found" : "Bad Request: No valid session ID provided",
+            },
+            id: null,
+          });
+          return;
+        }
+      }
+
       // Delegate to SDK transport
       try {
-        await transport.handleRequest(req, res, parsedBody);
+        await target.handleRequest(req, res, parsedBody);
       } catch (error: unknown) {
         // If response hasn't been sent yet
         if (!res.headersSent) {
@@ -406,6 +471,10 @@ export async function createHttpServer(options: HttpServerOptions): Promise<Http
       sseTimer = null;
     }
     await transport.close();
+    for (const sessionTransport of sessions.values()) {
+      await sessionTransport.close().catch(() => undefined);
+    }
+    sessions.clear();
     await new Promise<void>((resolve, reject) => {
       server.close((err) => {
         if (err) reject(err);
